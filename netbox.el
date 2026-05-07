@@ -1,11 +1,12 @@
 ;;; netbox.el --- Browse and search NetBox via its REST API -*- lexical-binding: t -*-
 
-;; Copyright (C) 2026 Contributors
-;; Author: evemacs-nb contributors
+;; Copyright (C) 2026 sraupach
+;; Author: sraupach <info@gehma.eu>
+;; Assisted-by: GITHub-Copilot:Claude-Sonnet-4.6
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: tools, network, netbox
-;; URL: https://github.com/example/evemacs-nb
+;; URL: https://github.com/sraupach/netbox.el
 
 ;; This file is NOT part of GNU Emacs.
 
