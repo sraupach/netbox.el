@@ -1,0 +1,301 @@
+# netbox.el
+
+> Browse, search and navigate your [NetBox](https://netbox.dev/) instance
+> directly from Emacs — no external packages required.
+
+**Requires Emacs 28.1+** · Only built-in libraries (`url.el`, `json.el`,
+`tabulated-list-mode`, `auth-source`) · GPL-3.0-or-later
+
+---
+
+## Features
+
+- 📋 **Tabulated list views** for every major NetBox resource type
+- 🔍 **Full-text search** across any resource via the `?q=` API parameter
+- 🔎 **Super search** — query ALL resource types at once from a single prompt
+- 🎨 **Status colour-coding** — Active/Connected in green, Planned in yellow,
+  Failed/Decommissioned in red, and more
+- 📐 **Auto-sized columns** — column widths expand to fit the widest value
+- 🔗 **Cross-resource navigation** — related objects in detail buffers are
+  rendered as clickable links; press `RET` or click to jump straight to them
+- 🌐 **Open in browser** — press `o` to open any object's NetBox URL directly in your default browser
+- 🔎 **Live filter indicator** — active `?q=` filter shown in the mode-line;
+  press `F` to edit the current filter without retyping
+- ⚡ **Response caching** — configurable TTL (default 5 min) eliminates
+  redundant API round-trips; `g r` always fetches live data
+- 🔒 **Secure token storage** via `auth-source` / `~/.authinfo.gpg`
+- 🛡️ **Pre-fetch connectivity check** for fast, clear error messages
+- 🌍 **Per-request proxy support** — never touches global Emacs proxy state
+- 😈 **Evil mode integration** — normal-state bindings out of the box
+
+---
+
+## Installation
+
+### `straight.el` + `use-package`
+
+```elisp
+(use-package netbox
+  :straight (:host github :repo "example/evemacs-nb")
+  :config
+  (setq netbox-url   "https://netbox.example.com"
+        netbox-token "your-api-token-here"))
+```
+
+### Manually
+
+```elisp
+(add-to-list 'load-path "/path/to/evemacs-nb")
+(require 'netbox)
+```
+
+---
+
+## Quick start
+
+```
+M-x netbox
+```
+
+Opens a `completing-read` prompt — pick a resource type and you're in.
+Use `C-u M-x netbox` to pre-filter with a search query.
+
+```
+M-x netbox-super-search
+```
+
+Searches ALL resource types at once — results are merged into a single list
+showing Type, Name, Description, and URL.
+
+```
+M-x netbox-check-config
+```
+
+Validates your configuration and tests live connectivity before you dig in.
+
+---
+
+## Usage
+
+### Direct resource commands
+
+| Command                         | Resource                      |
+|---------------------------------|-------------------------------|
+| `M-x netbox-dcim-sites`         | DCIM → Sites                  |
+| `M-x netbox-dcim-racks`         | DCIM → Racks                  |
+| `M-x netbox-dcim-devices`       | DCIM → Devices                |
+| `M-x netbox-dcim-interfaces`    | DCIM → Interfaces             |
+| `M-x netbox-dcim-cables`        | DCIM → Cables                 |
+| `M-x netbox-ipam-prefixes`      | IPAM → Prefixes               |
+| `M-x netbox-ipam-addresses`     | IPAM → IP Addresses           |
+| `M-x netbox-ipam-vlans`         | IPAM → VLANs                  |
+| `M-x netbox-ipam-vrfs`          | IPAM → VRFs                   |
+| `M-x netbox-virt-clusters`      | Virtualization → Clusters     |
+| `M-x netbox-virt-vms`           | Virtualization → VMs          |
+| `M-x netbox-circuits`           | Circuits                      |
+| `M-x netbox-circuits-providers` | Circuit Providers             |
+| `M-x netbox-tenancy-tenants`    | Tenancy → Tenants             |
+| `M-x netbox-super-search`      | Search ALL types at once       |
+| `M-x netbox-search`            | Search a specific resource     |
+
+### Key bindings — list buffers
+
+| Key   | Action                                  |
+|-------|-----------------------------------------|
+| `RET` | Open detail view for the selected row   |
+| `g r` | Refresh from API (bypasses cache)       |
+| `o`   | Open object's URL in default browser    |
+| `/`   | Set a new filter query (uses `?q=`)     |
+| `F`   | Edit the current filter (pre-filled)    |
+| `q`   | Close buffer                            |
+| `?`   | Show key binding help                   |
+
+### Key bindings — detail buffers
+
+| Key         | Action                                      |
+|-------------|---------------------------------------------|
+| `RET`       | Follow link to a related object             |
+| `g r`       | Reload from API                             |
+| `o`         | Open object's URL in default browser        |
+| `y`         | Copy field value at point to kill ring      |
+| `TAB`       | Move to next link                           |
+| `S-TAB`     | Move to previous link                       |
+| `q`         | Close buffer                                |
+| `?`         | Show key binding help                       |
+
+### Key bindings — super search buffer
+
+| Key   | Action                                      |
+|-------|---------------------------------------------|
+| `RET` | Open detail view for the selected result    |
+| `g r` | Re-run the current search                   |
+| `o`   | Open object's URL in default browser        |
+| `/`   | Run a new search query                      |
+| `F`   | Edit the current query (pre-filled)         |
+| `q`   | Close buffer                                |
+| `?`   | Show key binding help                       |
+
+> **Tip:** In a detail buffer, any related object (Site, Device, Tenant, …)
+> that NetBox returns with a URL is rendered as a clickable link.
+> Press `RET` on it or click with the mouse to navigate directly to that
+> object's own detail view.
+
+### Opening objects in the browser
+
+Press `o` in either list or detail buffers to open the NetBox URL for any object
+in your default web browser. This is useful for:
+
+- Viewing the full object page in NetBox with all related data, tags, and custom fields
+- Inspecting or editing objects that require browser-based interaction
+- Switching context between the Emacs CLI and the web interface
+
+In list buffers, `o` works instantly (no API call required). In detail buffers,
+it opens the exact URL stored in the `"url"` field returned by the API.
+
+---
+
+## Configuration
+
+All settings live under the `netbox` customization group
+(`M-x customize-group RET netbox`).
+
+| Variable                      | Default  | Description                                                    |
+|-------------------------------|----------|----------------------------------------------------------------|
+| `netbox-url`                  | `""`     | Base URL of your NetBox instance (no trailing slash)           |
+| `netbox-token`                | `""`     | API token — leave empty to use `auth-source` (see below)       |
+| `netbox-api-prefix`           | `"/api"` | API path prefix (change for reverse-proxy installs)            |
+| `netbox-default-page-size`    | `50`     | Results per page for paginated fetches                         |
+| `netbox-tls-verify`           | `t`      | Set to `nil` to skip TLS certificate verification              |
+| `netbox-timeout`              | `30`     | Request timeout in seconds for data fetches                    |
+| `netbox-proxy`                | `nil`    | Proxy URL, `"direct"`, or `nil` to inherit global proxy        |
+| `netbox-reuse-window`         | `t`      | `t` = current window · `nil` = new window                      |
+| `netbox-pre-fetch-check`      | `t`      | Ping NetBox before each fetch for fast error reporting         |
+| `netbox-connectivity-timeout` | `5`      | Timeout in seconds for the pre-fetch ping                      |
+| `netbox-cache-ttl`            | `300`    | Seconds to cache list responses · `0` disables caching         |
+
+### Example configuration
+
+```elisp
+(use-package netbox
+  :straight (:host github :repo "example/evemacs-nb")
+  :config
+  (setq netbox-url   "https://netbox.example.com"
+        netbox-token "your-api-token-here"  ; or use ~/.authinfo (see below)
+
+        ;; Open each NetBox buffer beside the current window
+        netbox-reuse-window nil
+
+        ;; Cache responses for 10 minutes
+        netbox-cache-ttl 600
+
+        ;; Fetch more rows per page
+        netbox-default-page-size 100
+
+        ;; Route API traffic through a proxy (optional)
+        ;; netbox-proxy "http://proxy.corp:8080"
+
+        ;; Skip TLS verification for self-signed certs (not recommended)
+        ;; netbox-tls-verify nil
+        ))
+```
+
+### Storing your token with auth-source *(recommended)*
+
+Keep your token out of `init.el` by adding an entry to `~/.authinfo`
+(or `~/.authinfo.gpg` for GPG-encrypted storage):
+
+```
+machine netbox.example.com login apitoken password <your-token>
+```
+
+Then only set `netbox-url` — the token is looked up automatically.
+
+### Response caching
+
+`netbox-cache-ttl` controls how long list responses are cached in memory:
+
+| Value        | Behaviour                                      |
+|--------------|------------------------------------------------|
+| `300` (default) | Cache each endpoint+query for 5 minutes     |
+| `0`          | Disable caching entirely                       |
+| any integer  | Cache for that many seconds                    |
+
+`g r` in a list buffer **always** bypasses the cache and fetches live data.
+`M-x netbox-cache-clear` flushes the entire in-memory cache immediately.
+
+### Window display behaviour
+
+| `netbox-reuse-window` | Behaviour                                      |
+|-----------------------|------------------------------------------------|
+| `t` (default)         | Replace the current window (`switch-to-buffer`) |
+| `nil`                 | Open in a new window (`switch-to-buffer-other-window`) |
+
+### Pre-fetch connectivity check
+
+When `netbox-pre-fetch-check` is `t` (default), a quick ping to
+`<netbox-url>/api/` is made before every data fetch using
+`netbox-connectivity-timeout` as the deadline.  Unreachable instances
+are reported immediately with a `g r` retry hint rather than silently
+hanging for the full `netbox-timeout`.
+
+```elisp
+;; Disable on fast, reliable networks to save one round-trip
+(setq netbox-pre-fetch-check nil)
+```
+
+### Proxy configuration
+
+`netbox-proxy` applies **only** to NetBox requests and never alters the
+global `url-proxy-services` value.
+
+| Value                     | Behaviour                                           |
+|---------------------------|-----------------------------------------------------|
+| `nil` (default)           | Inherit Emacs' global proxy (or go direct)          |
+| `"direct"`                | Force a direct connection, bypassing any global proxy |
+| `"http://host:port"`      | Route all NetBox requests through this proxy        |
+
+```elisp
+(setq netbox-proxy "http://proxy.corp:8080")
+(setq netbox-proxy "http://user:password@proxy.corp:8080")
+(setq netbox-proxy "direct")
+```
+
+### Overriding individual endpoint paths
+
+Each API endpoint is a `defvar` you can override for non-standard installs:
+
+```elisp
+(setq netbox-endpoint-dcim-devices "/custom-prefix/api/dcim/devices/")
+```
+
+Available endpoint variables:
+
+- `netbox-endpoint-dcim-sites`, `-racks`, `-devices`, `-interfaces`, `-cables`
+- `netbox-endpoint-ipam-prefixes`, `-addresses`, `-vlans`, `-vrfs`
+- `netbox-endpoint-virt-clusters`, `-vms`
+- `netbox-endpoint-circuits-circuits`, `-providers`
+- `netbox-endpoint-tenancy-tenants`
+
+---
+
+## Customizing columns
+
+Each resource has a `defvar` controlling which columns appear in its list view:
+
+```elisp
+(setq netbox-columns-dcim-devices
+      '(("Name"       30 "name")
+        ("Site"       20 "site" "name")
+        ("Primary IP" 20 "primary_ip" "address")))
+```
+
+Each entry is `(HEADER WIDTH KEY...)` where `KEY...` is the path into the
+JSON object.  The `WIDTH` value is a **minimum** — columns automatically
+expand to fit the widest value after data loads.  Any column with the header
+`"Status"` automatically receives semantic colour-coding.
+
+---
+
+## License
+
+GPL-3.0-or-later
