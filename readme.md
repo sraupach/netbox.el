@@ -36,7 +36,7 @@
 
 ```elisp
 (use-package netbox
-  :straight (:host github :repo "example/evemacs-nb")
+  :straight (:host github :repo "sraupach/netbox.el")
   :config
   (setq netbox-url   "https://netbox.example.com"
         netbox-token "your-api-token-here"))
@@ -45,7 +45,7 @@
 ### Manually
 
 ```elisp
-(add-to-list 'load-path "/path/to/evemacs-nb")
+(add-to-list 'load-path "/path/to/netbox.el")
 (require 'netbox)
 ```
 
@@ -177,7 +177,7 @@ All settings live under the `netbox` customization group
 
 ```elisp
 (use-package netbox
-  :straight (:host github :repo "example/evemacs-nb")
+  :straight (:host github :repo "sraupach/netbox.el")
   :config
   (setq netbox-url   "https://netbox.example.com"
         netbox-token "your-api-token-here"  ; or use ~/.authinfo (see below)
