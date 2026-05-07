@@ -6,6 +6,8 @@
 **Requires Emacs 28.1+** · Only built-in libraries (`url.el`, `json.el`,
 `tabulated-list-mode`, `auth-source`) · GPL-3.0-or-later
 
+
+### This Package was created by using AI! 
 ---
 
 ## Features
