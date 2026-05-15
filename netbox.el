@@ -246,7 +246,8 @@ has been idle for that many seconds.  nil disables automatic pre-caching."
   :group 'netbox
   :set (lambda (sym val)
          (set-default sym val)
-         (netbox--precache-reschedule)))
+         (when (fboundp 'netbox--precache-reschedule)
+           (netbox--precache-reschedule))))
 
 
 
@@ -1838,20 +1839,19 @@ Each resource is fetched asynchronously; Emacs remains fully responsive.
 Call this from your init file (or bind it) to warm the cache so that
 `netbox-jump' shows its prompt instantly for common resource types."
   (interactive)
-  (when (or (null netbox-url) (string-empty-p netbox-url))
-    (when (called-interactively-p 'any)
-      (user-error "netbox-url is not configured"))
-    (cl-return-from netbox-precache))
-  (dolist (resource netbox-precache-resources)
-    (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
-           (endpoint (and entry (symbol-value (car entry)))))
-      (when endpoint
-        (netbox-api-list-async-cached
-         endpoint nil
-         (lambda (objects err)
-           (if err
-               (message "NetBox pre-cache: error for %s: %s" resource err)
-             (message "NetBox pre-cache: %d %s cached" (length objects) resource))))))))
+  (if (or (null netbox-url) (string-empty-p netbox-url))
+      (when (called-interactively-p 'any)
+        (user-error "netbox-url is not configured"))
+    (dolist (resource netbox-precache-resources)
+      (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
+             (endpoint (and entry (symbol-value (car entry)))))
+        (when endpoint
+          (netbox-api-list-async-cached
+           endpoint nil
+           (lambda (objects err)
+             (if err
+                 (message "NetBox pre-cache: error for %s: %s" resource err)
+               (message "NetBox pre-cache: %d %s cached" (length objects) resource)))))))))
 
 (defun netbox--precache-reschedule ()
   "Cancel any existing idle pre-cache timer and start a new one if appropriate.
