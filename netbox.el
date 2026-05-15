@@ -228,7 +228,7 @@ Manual refresh (\\[netbox-list-refresh]) always bypasses the cache."
 (defcustom netbox-evil-integration nil
   "When non-nil, automatically configure evil keybindings for netbox.
 Evil normal-state bindings are set up via `netbox-evil-setup' as soon as evil
-is loaded.  Set this to t before loading netbox.el to enable:
+is loaded.  Set this to t before or after loading netbox.el:
 
   (setq netbox-evil-integration t)"
   :type 'boolean
@@ -1690,7 +1690,7 @@ This is called automatically when evil is loaded and
   (evil-set-initial-state 'netbox-detail-mode       'normal)
   (evil-set-initial-state 'netbox-super-search-mode 'normal)
   (evil-set-initial-state 'netbox-config-check-mode 'normal)
-  (evil-define-key* 'normal netbox-list-mode-map
+  (evil-define-key 'normal netbox-list-mode-map
     (kbd "RET") #'netbox-list-open-detail
     (kbd "g r") #'netbox-list-refresh
     (kbd "o")   #'netbox-list-open-url
@@ -1698,7 +1698,7 @@ This is called automatically when evil is loaded and
     (kbd "/")   #'netbox-list-search
     (kbd "F")   #'netbox-list-edit-filter
     (kbd "?")   #'netbox-help)
-  (evil-define-key* 'normal netbox-super-search-mode-map
+  (evil-define-key 'normal netbox-super-search-mode-map
     (kbd "RET") #'netbox--super-search-open-detail
     (kbd "g r") #'netbox-super-search-refresh
     (kbd "o")   #'netbox--super-search-open-browser-url
@@ -1706,7 +1706,7 @@ This is called automatically when evil is loaded and
     (kbd "/")   #'netbox-super-search-requery
     (kbd "F")   #'netbox-super-search-edit-query
     (kbd "?")   #'netbox-help)
-  (evil-define-key* 'normal netbox-detail-mode-map
+  (evil-define-key 'normal netbox-detail-mode-map
     (kbd "g r")       #'netbox-detail-refresh
     (kbd "o")         #'netbox-detail-open-url
     (kbd "q")         #'netbox-quit
@@ -1716,25 +1716,23 @@ This is called automatically when evil is loaded and
     (kbd "<tab>")     #'netbox-detail-next-button
     (kbd "<backtab>") #'netbox-detail-prev-button
     (kbd "S-TAB")     #'netbox-detail-prev-button)
-  (evil-define-key* 'normal netbox-config-check-mode-map
+  (evil-define-key 'normal netbox-config-check-mode-map
     (kbd "q")   #'netbox-quit)
-  ;; Ensure our mode maps win over ALL evil states including motion
-  ;; (which defines F, /, ? etc).  intercept-maps have highest priority.
-  ;; Called AFTER evil-define-key* so all bindings are present in the map.
-  (evil-make-intercept-map netbox-list-mode-map         'normal)
-  (evil-make-intercept-map netbox-super-search-mode-map 'normal)
-  (evil-make-intercept-map netbox-detail-mode-map       'normal)
-  (evil-make-intercept-map netbox-config-check-mode-map 'normal)
-  ;; Normalize evil keymaps whenever a buffer enters a netbox mode so that
-  ;; the overriding maps above take effect immediately in every new buffer.
-  (add-hook 'netbox-list-mode-hook         #'evil-normalize-keymaps)
-  (add-hook 'netbox-super-search-mode-hook #'evil-normalize-keymaps)
-  (add-hook 'netbox-detail-mode-hook       #'evil-normalize-keymaps)
-  (add-hook 'netbox-config-check-mode-hook #'evil-normalize-keymaps))
+  ;; Remove the regular define-key bindings to avoid conflicts
+  ;; since evil-define-key above now handles all states
+  (evil-normalize-keymaps))
 
 (with-eval-after-load 'evil
   (when netbox-evil-integration
     (netbox-evil-setup)))
+
+;; Fallback: if evil was already loaded when netbox.el was required, and
+;; netbox-evil-integration is set later in init (after `require'), the
+;; with-eval-after-load above already ran and saw nil.  Re-check after init.
+(add-hook 'after-init-hook
+          (lambda ()
+            (when (and netbox-evil-integration (featurep 'evil))
+              (netbox-evil-setup))))
 
 
 ;;;; ──────────────────────────────────────────────────────────
