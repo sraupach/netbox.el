@@ -176,9 +176,11 @@ buffer also closes that window."
   "Window created for NetBox when `netbox-reuse-window' is nil.
 Set on first display; cleared when the root buffer is quit.")
 
-(defvar netbox--root-buffer nil
-  "The first buffer shown in `netbox--managed-window'.
-Quitting this buffer also deletes the managed window.")
+(defvar-local netbox--is-root-buffer nil
+  "Non-nil in the buffer that opened the managed NetBox window.
+Quitting this buffer also deletes `netbox--managed-window'.
+Declared permanent-local so it survives major-mode re-initialisation.")
+(put 'netbox--is-root-buffer 'permanent-local t)
 
 (defcustom netbox-pre-fetch-check t
   "When non-nil (default), verify NetBox is reachable before each API fetch.
@@ -335,8 +337,9 @@ or an http+https proxy spec for any other string."
           (select-window netbox--managed-window)
           (switch-to-buffer buf))
       (switch-to-buffer-other-window buf)
-      (setq netbox--managed-window (selected-window)
-            netbox--root-buffer    buf))))
+      (setq netbox--managed-window (selected-window))
+      (with-current-buffer buf
+        (setq netbox--is-root-buffer t)))))
 
 (defun netbox-quit ()
   "Quit the current NetBox buffer.
@@ -344,16 +347,16 @@ When `netbox-reuse-window' is nil and this is the root buffer (the first
 one shown in the managed window), also delete that window."
   (interactive)
   (let ((is-root (and (not netbox-reuse-window)
-                      (eq (current-buffer) netbox--root-buffer)
+                      netbox--is-root-buffer
                       (windowp netbox--managed-window)
                       (window-live-p netbox--managed-window)
-                      (not (one-window-p)))))
+                      (not (one-window-p))))
+        (win netbox--managed-window))
     (kill-current-buffer)
     (when is-root
-      (when (window-live-p netbox--managed-window)
-        (delete-window netbox--managed-window))
-      (setq netbox--managed-window nil
-            netbox--root-buffer    nil))))
+      (when (window-live-p win)
+        (delete-window win))
+      (setq netbox--managed-window nil))))
 
 (defun netbox--run-with-connectivity-check (buf action)
   "Verify NetBox is reachable, then call ACTION (a zero-argument function).
