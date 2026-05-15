@@ -230,6 +230,24 @@ is loaded.  Set this to t before loading netbox.el to enable:
   :type 'boolean
   :group 'netbox)
 
+(defcustom netbox-precache-resources '("Devices" "IP Addresses" "Virtual Machines")
+  "Resource types to pre-fetch into the cache for fast `netbox-jump'.
+Each entry must be a key present in `netbox--resource-alist'.
+Pre-fetching populates `netbox--cache' in the background so that the first
+call to `netbox-jump' for these resources shows the prompt without delay."
+  :type '(repeat string)
+  :group 'netbox)
+
+(defcustom netbox-precache-after-idle nil
+  "Idle seconds after which to automatically pre-cache `netbox-precache-resources'.
+Set to a positive integer (e.g. 10) to trigger `netbox-precache' once Emacs
+has been idle for that many seconds.  nil disables automatic pre-caching."
+  :type '(choice (const :tag "Disabled" nil) integer)
+  :group 'netbox
+  :set (lambda (sym val)
+         (set-default sym val)
+         (netbox--precache-reschedule)))
+
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -991,6 +1009,7 @@ Press RET to apply; clear the prompt and press RET to remove the filter."
         (netbox--help-row "M-x netbox-super-search"       "Search ALL resource types at once")
         (netbox--help-row "M-x netbox-search"             "Search a specific resource type")
         (netbox--help-row "M-x netbox-jump"               "Jump to any object by name (completing-read)")
+        (netbox--help-row "M-x netbox-precache"           "Pre-fetch resources into cache in background")
         (netbox--help-row "M-x netbox-check-config"       "Validate config & test connectivity")
         (netbox--help-row "M-x netbox-cache-clear"        "Flush the entire response cache")
         (netbox--help-row "M-x netbox-dcim-sites"         "Browse DCIM → Sites")
@@ -1021,6 +1040,8 @@ Press RET to apply; clear the prompt and press RET to remove the filter."
         (netbox--help-row "netbox-proxy"             "Proxy URL, \"direct\", or nil")
         (netbox--help-row "netbox-tls-verify"        "nil to disable TLS verification")
         (netbox--help-row "netbox-default-page-size" "Results per page (default 50)")
+        (netbox--help-row "netbox-precache-resources" "Resources to pre-fetch for netbox-jump")
+        (netbox--help-row "netbox-precache-after-idle" "Idle seconds before auto-pre-caching (nil=off)")
         (insert "\n"))
       (special-mode)
       (goto-char (point-min)))
@@ -1733,56 +1754,58 @@ skipping any empty values.  Used as completion candidates in `netbox-jump'."
           (push text parts))))
     (mapconcat #'identity (nreverse parts) "  ")))
 
-(defun netbox--candidates (endpoint columns)
-  "Fetch all objects from ENDPOINT and return an alist of (DISPLAY . OBJ).
+(defun netbox--build-candidates (objects columns)
+  "Convert OBJECTS list into an alist of (DISPLAY . OBJ) pairs.
 DISPLAY is built via `netbox--object-display-string' using COLUMNS.
-Uses the synchronous API; shows a brief message while fetching."
-  (message "NetBox: fetching candidates…")
-  (let ((objects (netbox-api-list endpoint nil)))
-    (message "NetBox: %d candidates loaded" (length objects))
-    (mapcar (lambda (obj)
-              (cons (netbox--object-display-string obj columns) obj))
-            objects)))
+Pure function — no side effects, no API calls."
+  (mapcar (lambda (obj)
+            (cons (netbox--object-display-string obj columns) obj))
+          objects))
 
-(defun netbox--completing-read-object (resource)
-  "Prompt the user to select an object from RESOURCE using `completing-read'.
-RESOURCE must be a key in `netbox--resource-alist'.
-Returns the selected object alist, or nil if RESOURCE is unknown."
-  (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
-         (endpoint (and entry (symbol-value (car entry))))
-         (columns  (and entry (symbol-value (cdr entry)))))
-    (unless entry
-      (user-error "Unknown NetBox resource: %s" resource))
-    (let* ((candidates (netbox--candidates endpoint columns))
-           (table      (lambda (str pred action)
-                         (if (eq action 'metadata)
-                             '(metadata (category . netbox-object))
-                           (complete-with-action action candidates str pred))))
-           (choice (completing-read
-                    (format "NetBox %s: " resource)
-                    table nil t)))
-      (cdr (assoc choice candidates)))))
+(defun netbox--jump-open-prompt (resource candidates)
+  "Open a `completing-read' prompt for RESOURCE over CANDIDATES.
+CANDIDATES is an alist of (DISPLAY . OBJ).  Navigates to the detail view
+of the selected object.  Called from within an async fetch callback."
+  (let* ((table (lambda (str pred action)
+                  (if (eq action 'metadata)
+                      '(metadata (category . netbox-object))
+                    (complete-with-action action candidates str pred))))
+         (choice (completing-read (format "NetBox %s: " resource) table nil t))
+         (obj    (cdr (assoc choice candidates)))
+         (url    (and obj (cdr (assoc "url" obj))))
+         (nav    (and url (netbox--parse-api-url url))))
+    (if nav
+        (netbox-show-detail (car nav) (cdr nav))
+      (user-error "Cannot determine endpoint for selected object"))))
 
 ;;;###autoload
 (defun netbox-jump (&optional resource)
   "Jump directly to a NetBox object by name using `completing-read'.
-Prompts for a RESOURCE type, then for an object within that type.
-Opens the detail view for the selected object.
+Prompts for a RESOURCE type (if not supplied), fetches all objects of that
+type asynchronously, then opens a `completing-read' prompt.  The cache is
+used on repeat calls so the prompt appears instantly.
 
 Works with any completion framework (Vertico, Consult, Ivy, default).
-With a prefix argument, skips the resource prompt and uses RESOURCE directly."
+See also `netbox-precache' to warm the cache ahead of time."
   (interactive
    (list (completing-read "NetBox resource: "
                           (mapcar #'car netbox--resource-alist)
                           nil t)))
   (when (or (null resource) (string-empty-p resource))
     (user-error "No resource selected"))
-  (let* ((obj      (netbox--completing-read-object resource))
-         (api-url  (cdr (assoc "url" obj)))
-         (nav      (and api-url (netbox--parse-api-url api-url))))
-    (if nav
-        (netbox-show-detail (car nav) (cdr nav))
-      (user-error "Cannot determine endpoint for selected object"))))
+  (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
+         (endpoint (and entry (symbol-value (car entry))))
+         (columns  (and entry (symbol-value (cdr entry)))))
+    (unless entry
+      (user-error "Unknown NetBox resource: %s" resource))
+    (message "NetBox: fetching %s…" resource)
+    (netbox-api-list-async-cached
+     endpoint nil
+     (lambda (objects err)
+       (if err
+           (message "NetBox: error fetching %s: %s" resource err)
+         (netbox--jump-open-prompt resource
+                                   (netbox--build-candidates objects columns)))))))
 
 ;;;###autoload
 (defun netbox-jump-to-device ()
@@ -1801,6 +1824,46 @@ With a prefix argument, skips the resource prompt and uses RESOURCE directly."
   "Jump directly to a NetBox Virtual Machine by name using `completing-read'."
   (interactive)
   (netbox-jump "Virtual Machines"))
+
+
+;;;; ──────────────────────────────────────────────────────────
+;;;; Pre-cache
+
+(defvar netbox--precache-idle-timer nil
+  "Timer used for idle-triggered pre-caching, or nil if not scheduled.")
+
+(defun netbox-precache ()
+  "Pre-fetch `netbox-precache-resources' into the cache in the background.
+Each resource is fetched asynchronously; Emacs remains fully responsive.
+Call this from your init file (or bind it) to warm the cache so that
+`netbox-jump' shows its prompt instantly for common resource types."
+  (interactive)
+  (when (or (null netbox-url) (string-empty-p netbox-url))
+    (when (called-interactively-p 'any)
+      (user-error "netbox-url is not configured"))
+    (cl-return-from netbox-precache))
+  (dolist (resource netbox-precache-resources)
+    (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
+           (endpoint (and entry (symbol-value (car entry)))))
+      (when endpoint
+        (netbox-api-list-async-cached
+         endpoint nil
+         (lambda (objects err)
+           (if err
+               (message "NetBox pre-cache: error for %s: %s" resource err)
+             (message "NetBox pre-cache: %d %s cached" (length objects) resource))))))))
+
+(defun netbox--precache-reschedule ()
+  "Cancel any existing idle pre-cache timer and start a new one if appropriate.
+Called automatically when `netbox-precache-after-idle' changes."
+  (when (timerp netbox--precache-idle-timer)
+    (cancel-timer netbox--precache-idle-timer)
+    (setq netbox--precache-idle-timer nil))
+  (when (and (boundp 'netbox-precache-after-idle)
+             netbox-precache-after-idle
+             (integerp netbox-precache-after-idle))
+    (setq netbox--precache-idle-timer
+          (run-with-idle-timer netbox-precache-after-idle t #'netbox-precache))))
 
 
 ;;;; ──────────────────────────────────────────────────────────

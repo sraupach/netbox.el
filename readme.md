@@ -192,6 +192,8 @@ All settings live under the `netbox` customization group
 | `netbox-pre-fetch-check`      | `t`      | Ping NetBox before each fetch for fast error reporting         |
 | `netbox-connectivity-timeout` | `5`      | Timeout in seconds for the pre-fetch ping                      |
 | `netbox-cache-ttl`            | `300`    | Seconds to cache list responses · `0` disables caching         |
+| `netbox-precache-resources`   | `'("Devices" "IP Addresses" "Virtual Machines")` | Resources to pre-fetch for `netbox-jump` |
+| `netbox-precache-after-idle`  | `nil`    | Idle seconds before auto-pre-caching; `nil` disables           |
 | `netbox-evil-integration`     | `nil`    | Set to `t` to auto-configure evil keybindings when evil is loaded |
 
 ### Example configuration
@@ -243,6 +245,26 @@ Then only set `netbox-url` — the token is looked up automatically.
 
 `g r` in a list buffer **always** bypasses the cache and fetches live data.
 `M-x netbox-cache-clear` flushes the entire in-memory cache immediately.
+
+### Pre-caching for instant `netbox-jump`
+
+`netbox-jump` fetches objects asynchronously — Emacs stays responsive, but there
+is a short delay on the **first** call while the data loads.  Pre-caching
+eliminates that delay.
+
+**On-demand:** call `M-x netbox-precache` at any time to warm the cache for
+the resources listed in `netbox-precache-resources` (background, non-blocking).
+
+**Automatic on idle:** set `netbox-precache-after-idle` to a number of idle
+seconds and the pre-cache runs automatically once Emacs has been idle that long:
+
+```elisp
+;; Pre-cache Devices, IP Addresses and VMs after 10 s of idle time
+(setq netbox-precache-after-idle 10)
+
+;; Customise which resources are pre-cached
+(setq netbox-precache-resources '("Devices" "IP Addresses" "Prefixes"))
+```
 
 ### Window display behaviour
 
