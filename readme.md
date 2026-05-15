@@ -291,11 +291,11 @@ Each API endpoint is a `defvar` you can override for non-standard installs:
 
 Available endpoint variables:
 
-- `netbox-endpoint-dcim-sites`, `-racks`, `-devices`, `-interfaces`, `-cables`
-- `netbox-endpoint-ipam-prefixes`, `-addresses`, `-vlans`, `-vrfs`
-- `netbox-endpoint-virt-clusters`, `-vms`
+- `netbox-endpoint-dcim-sites`, `-racks`, `-devices`, `-interfaces`, `-cables`, `-locations`
+- `netbox-endpoint-ipam-prefixes`, `-addresses`, `-vlans`, `-vrfs`, `-ranges`
+- `netbox-endpoint-virt-clusters`, `-vms`, `-interfaces`
 - `netbox-endpoint-circuits-circuits`, `-providers`
-- `netbox-endpoint-tenancy-tenants`
+- `netbox-endpoint-tenancy-tenants`, `-contacts`
 
 ---
 
