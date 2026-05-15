@@ -1505,6 +1505,17 @@ programmatically."
 ;;;; ──────────────────────────────────────────────────────────
 ;;;; Configuration check
 
+(defvar netbox-config-check-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "q") #'kill-current-buffer)
+    map)
+  "Keymap for `netbox-config-check-mode'.")
+
+(define-derived-mode netbox-config-check-mode special-mode "NetBox-Config"
+  "Major mode for the NetBox configuration check buffer.
+
+\\{netbox-config-check-mode-map}")
+
 ;;;###autoload
 (defun netbox-check-config ()
   "Validate configuration and test connectivity to the NetBox instance.
@@ -1571,15 +1582,44 @@ Displays a diagnostic report in the *NetBox config check* buffer."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize "NetBox configuration check\n" 'face 'bold))
-        (insert (make-string 40 ?─) "\n\n")
-        (insert (format "  %-35s %s\n" "netbox-url" (or netbox-url "(not set)")))
+        (insert (make-string 50 ?─) "\n\n")
+        (insert (propertize "Settings\n" 'face 'bold))
+        (insert (make-string 50 ?─) "\n")
+        (insert (format "  %-35s %s\n" "netbox-url"
+                        (if (and netbox-url (not (string-empty-p netbox-url)))
+                            netbox-url "(not set)")))
+        (insert (format "  %-35s %s\n" "netbox-token"
+                        (cond
+                         ((and netbox-token (not (string-empty-p netbox-token))) "(set)")
+                         ((and netbox-url (not (string-empty-p netbox-url))
+                               (car (auth-source-search
+                                     :host (url-host (url-generic-parse-url netbox-url))
+                                     :user "apitoken" :max 1)))
+                          "(from auth-source)")
+                         (t "(not set)"))))
         (insert (format "  %-35s %s\n" "netbox-api-prefix" netbox-api-prefix))
+        (insert (format "  %-35s %s\n" "netbox-default-page-size"
+                        (number-to-string netbox-default-page-size)))
+        (insert (format "  %-35s %s\n" "netbox-tls-verify"
+                        (if netbox-tls-verify "t" "nil (disabled)")))
+        (insert (format "  %-35s %s\n" "netbox-timeout"
+                        (format "%ds" netbox-timeout)))
         (insert (format "  %-35s %s\n" "netbox-proxy"
                         (or netbox-proxy "nil (inherit global)")))
-        (insert (format "  %-35s %s\n\n" "netbox-tls-verify"
-                        (if netbox-tls-verify "t" "nil (disabled)")))
+        (insert (format "  %-35s %s\n" "netbox-reuse-window"
+                        (if netbox-reuse-window "t (current window)" "nil (new window)")))
+        (insert (format "  %-35s %s\n" "netbox-pre-fetch-check"
+                        (if netbox-pre-fetch-check "t" "nil (disabled)")))
+        (insert (format "  %-35s %s\n" "netbox-connectivity-timeout"
+                        (format "%ds" netbox-connectivity-timeout)))
+        (insert (format "  %-35s %s\n" "netbox-cache-ttl"
+                        (if (zerop netbox-cache-ttl)
+                            "0 (disabled)"
+                          (format "%ds" netbox-cache-ttl))))
+        (insert (format "  %-35s %s\n\n" "netbox-evil-integration"
+                        (if netbox-evil-integration "t" "nil")))
         (insert (propertize "Checks\n" 'face 'bold))
-        (insert (make-string 40 ?─) "\n")
+        (insert (make-string 50 ?─) "\n")
         (dolist (c (nreverse checks))
           (let* ((label (car c))
                  (ok    (cdr c))
@@ -1589,8 +1629,8 @@ Displays a diagnostic report in the *NetBox config check* buffer."
                  (face  (if ok 'default '(:foreground "red"))))
             (insert mark (propertize label 'face face) "\n")))
         (insert "\n")
-        (special-mode)))
-    (display-buffer buf)))
+        (netbox-config-check-mode)))
+    (netbox--display-buffer buf)))
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -1612,6 +1652,7 @@ This is called automatically when evil is loaded and
   (evil-set-initial-state 'netbox-list-mode         'normal)
   (evil-set-initial-state 'netbox-detail-mode       'normal)
   (evil-set-initial-state 'netbox-super-search-mode 'normal)
+  (evil-set-initial-state 'netbox-config-check-mode 'normal)
   (evil-define-key* 'normal netbox-list-mode-map
     (kbd "RET") #'netbox-list-open-detail
     (kbd "g r") #'netbox-list-refresh
@@ -1638,17 +1679,21 @@ This is called automatically when evil is loaded and
     (kbd "<tab>")     #'netbox-detail-next-button
     (kbd "<backtab>") #'netbox-detail-prev-button
     (kbd "S-TAB")     #'netbox-detail-prev-button)
+  (evil-define-key* 'normal netbox-config-check-mode-map
+    (kbd "q")   #'kill-current-buffer)
   ;; Ensure our mode maps win over ALL evil states including motion
   ;; (which defines F, /, ? etc).  intercept-maps have highest priority.
   ;; Called AFTER evil-define-key* so all bindings are present in the map.
   (evil-make-intercept-map netbox-list-mode-map         'normal)
   (evil-make-intercept-map netbox-super-search-mode-map 'normal)
   (evil-make-intercept-map netbox-detail-mode-map       'normal)
+  (evil-make-intercept-map netbox-config-check-mode-map 'normal)
   ;; Normalize evil keymaps whenever a buffer enters a netbox mode so that
   ;; the overriding maps above take effect immediately in every new buffer.
   (add-hook 'netbox-list-mode-hook         #'evil-normalize-keymaps)
   (add-hook 'netbox-super-search-mode-hook #'evil-normalize-keymaps)
-  (add-hook 'netbox-detail-mode-hook       #'evil-normalize-keymaps))
+  (add-hook 'netbox-detail-mode-hook       #'evil-normalize-keymaps)
+  (add-hook 'netbox-config-check-mode-hook #'evil-normalize-keymaps))
 
 (with-eval-after-load 'evil
   (when netbox-evil-integration
