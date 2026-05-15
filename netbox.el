@@ -1661,6 +1661,11 @@ Displays a diagnostic report in the *NetBox config check* buffer."
                                                     :user "apitoken"
                                                     :max 1))))))
           checks)
+    ;; 4. precache sanity: cache must be enabled for precaching to be useful
+    (when netbox-precache-after-idle
+      (push (cons "Cache enabled (required for netbox-precache-after-idle)"
+                  (> netbox-cache-ttl 0))
+            checks))
     ;; 3. live connectivity — GET /api/
     (let ((api-ok nil) (api-msg ""))
       (condition-case err
@@ -1729,6 +1734,14 @@ Displays a diagnostic report in the *NetBox config check* buffer."
                         (if (zerop netbox-cache-ttl)
                             "0 (disabled)"
                           (format "%ds" netbox-cache-ttl))))
+        (insert (format "  %-35s %s\n" "netbox-precache-resources"
+                        (if netbox-precache-resources
+                            (mapconcat #'identity netbox-precache-resources ", ")
+                          "(none)")))
+        (insert (format "  %-35s %s\n" "netbox-precache-after-idle"
+                        (if netbox-precache-after-idle
+                            (format "%ds" netbox-precache-after-idle)
+                          "nil (disabled)")))
         (insert (format "  %-35s %s\n\n" "netbox-evil-integration"
                         (if netbox-evil-integration "t" "nil")))
         (insert (propertize "Checks\n" 'face 'bold))
