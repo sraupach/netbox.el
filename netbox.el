@@ -166,9 +166,19 @@ Set to nil to disable verification, e.g. for self-signed internal CAs."
 
 (defcustom netbox-reuse-window t
   "When non-nil (default), open NetBox buffers in the selected window.
-When nil, open each buffer in a new window instead."
+When nil, the first NetBox buffer opens in a new window that is then
+reused for all subsequent NetBox navigation.  Quitting the initial
+buffer also closes that window."
   :type 'boolean
   :group 'netbox)
+
+(defvar netbox--managed-window nil
+  "Window created for NetBox when `netbox-reuse-window' is nil.
+Set on first display; cleared when the root buffer is quit.")
+
+(defvar netbox--root-buffer nil
+  "The first buffer shown in `netbox--managed-window'.
+Quitting this buffer also deletes the managed window.")
 
 (defcustom netbox-pre-fetch-check t
   "When non-nil (default), verify NetBox is reachable before each API fetch.
@@ -319,7 +329,31 @@ or an http+https proxy spec for any other string."
   "Display BUF according to `netbox-reuse-window'."
   (if netbox-reuse-window
       (switch-to-buffer buf)
-    (switch-to-buffer-other-window buf)))
+    (if (and (windowp netbox--managed-window)
+             (window-live-p netbox--managed-window))
+        (progn
+          (select-window netbox--managed-window)
+          (switch-to-buffer buf))
+      (switch-to-buffer-other-window buf)
+      (setq netbox--managed-window (selected-window)
+            netbox--root-buffer    buf))))
+
+(defun netbox-quit ()
+  "Quit the current NetBox buffer.
+When `netbox-reuse-window' is nil and this is the root buffer (the first
+one shown in the managed window), also delete that window."
+  (interactive)
+  (let ((is-root (and (not netbox-reuse-window)
+                      (eq (current-buffer) netbox--root-buffer)
+                      (windowp netbox--managed-window)
+                      (window-live-p netbox--managed-window)
+                      (not (one-window-p)))))
+    (kill-current-buffer)
+    (when is-root
+      (when (window-live-p netbox--managed-window)
+        (delete-window netbox--managed-window))
+      (setq netbox--managed-window nil
+            netbox--root-buffer    nil))))
 
 (defun netbox--run-with-connectivity-check (buf action)
   "Verify NetBox is reachable, then call ACTION (a zero-argument function).
@@ -604,7 +638,7 @@ Status columns (header \"Status\") are propertized with a semantic face."
 
 (defvar netbox-detail-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "q")         #'kill-current-buffer)
+    (define-key map (kbd "q")         #'netbox-quit)
     (define-key map (kbd "g r")       #'netbox-detail-refresh)
     (define-key map (kbd "o")         #'netbox-detail-open-url)
     (define-key map (kbd "?")         #'netbox-help)
@@ -809,7 +843,7 @@ by the value.  The value is copied as a plain string (no text properties)."
     (define-key map (kbd "RET") #'netbox-list-open-detail)
     (define-key map (kbd "g r") #'netbox-list-refresh)
     (define-key map (kbd "o")   #'netbox-list-open-url)
-    (define-key map (kbd "q")   #'kill-current-buffer)
+    (define-key map (kbd "q")   #'netbox-quit)
     (define-key map (kbd "/")   #'netbox-list-search)
     (define-key map (kbd "F")   #'netbox-list-edit-filter)
     (define-key map (kbd "?")   #'netbox-help)
@@ -1348,7 +1382,7 @@ Parses the object's API URL to determine the endpoint and ID."
     (define-key map (kbd "RET") #'netbox--super-search-open-detail)
     (define-key map (kbd "g r") #'netbox-super-search-refresh)
     (define-key map (kbd "o")   #'netbox--super-search-open-browser-url)
-    (define-key map (kbd "q")   #'kill-current-buffer)
+    (define-key map (kbd "q")   #'netbox-quit)
     (define-key map (kbd "/")   #'netbox-super-search-requery)
     (define-key map (kbd "F")   #'netbox-super-search-edit-query)
     (define-key map (kbd "?")   #'netbox-help)
@@ -1507,7 +1541,7 @@ programmatically."
 
 (defvar netbox-config-check-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "q") #'kill-current-buffer)
+    (define-key map (kbd "q") #'netbox-quit)
     map)
   "Keymap for `netbox-config-check-mode'.")
 
@@ -1657,7 +1691,7 @@ This is called automatically when evil is loaded and
     (kbd "RET") #'netbox-list-open-detail
     (kbd "g r") #'netbox-list-refresh
     (kbd "o")   #'netbox-list-open-url
-    (kbd "q")   #'kill-current-buffer
+    (kbd "q")   #'netbox-quit
     (kbd "/")   #'netbox-list-search
     (kbd "F")   #'netbox-list-edit-filter
     (kbd "?")   #'netbox-help)
@@ -1665,14 +1699,14 @@ This is called automatically when evil is loaded and
     (kbd "RET") #'netbox--super-search-open-detail
     (kbd "g r") #'netbox-super-search-refresh
     (kbd "o")   #'netbox--super-search-open-browser-url
-    (kbd "q")   #'kill-current-buffer
+    (kbd "q")   #'netbox-quit
     (kbd "/")   #'netbox-super-search-requery
     (kbd "F")   #'netbox-super-search-edit-query
     (kbd "?")   #'netbox-help)
   (evil-define-key* 'normal netbox-detail-mode-map
     (kbd "g r")       #'netbox-detail-refresh
     (kbd "o")         #'netbox-detail-open-url
-    (kbd "q")         #'kill-current-buffer
+    (kbd "q")         #'netbox-quit
     (kbd "y")         #'netbox-detail-yank-value
     (kbd "?")         #'netbox-help
     (kbd "TAB")       #'netbox-detail-next-button
@@ -1680,7 +1714,7 @@ This is called automatically when evil is loaded and
     (kbd "<backtab>") #'netbox-detail-prev-button
     (kbd "S-TAB")     #'netbox-detail-prev-button)
   (evil-define-key* 'normal netbox-config-check-mode-map
-    (kbd "q")   #'kill-current-buffer)
+    (kbd "q")   #'netbox-quit)
   ;; Ensure our mode maps win over ALL evil states including motion
   ;; (which defines F, /, ? etc).  intercept-maps have highest priority.
   ;; Called AFTER evil-define-key* so all bindings are present in the map.
