@@ -348,12 +348,14 @@ or an http+https proxy spec for any other string."
       (switch-to-buffer buf)
     (switch-to-buffer-other-window buf)))
 
-(defun netbox--run-with-connectivity-check (buf action)
-  "Verify NetBox is reachable, then call ACTION (a zero-argument function).
-If the check fails, show an error inside BUF instead of running ACTION.
-Calls ACTION directly when `netbox-pre-fetch-check' is nil."
+(defun netbox--check-connectivity-async (on-ok on-err)
+  "Asynchronously verify NetBox is reachable, then call ON-OK or ON-ERR.
+ON-OK is a zero-argument function called when the API responds successfully.
+ON-ERR is a one-argument function called with an error string on failure.
+Respects `netbox-pre-fetch-check' and `netbox-connectivity-timeout';
+if `netbox-pre-fetch-check' is nil, ON-OK is called immediately."
   (if (not netbox-pre-fetch-check)
-      (funcall action)
+      (funcall on-ok)
     (condition-case err
         (let* ((ping-url (concat (string-trim-right netbox-url "/")
                                  netbox-api-prefix "/"))
@@ -370,26 +372,29 @@ Calls ACTION directly when `netbox-pre-fetch-check' is nil."
                                 (ping-buf   (current-buffer)))
                             (kill-buffer ping-buf)
                             (if err-status
-                                (when (buffer-live-p buf)
-                                  (with-current-buffer buf
-                                    (let ((inhibit-read-only t))
-                                      (erase-buffer)
-                                      (insert (propertize
-                                               (format "NetBox unreachable: %s\n\nCheck `netbox-url' and network connectivity.\nPress `g r' to retry."
-                                                       (or (cadr err-status)
-                                                           (format "%s" err-status)))
-                                               'face 'error)))))
-                              (funcall action))))
+                                (funcall on-err
+                                         (format "%s" (or (cadr err-status)
+                                                          err-status)))
+                              (funcall on-ok))))
                         nil t netbox-connectivity-timeout))
       (error
-       (when (buffer-live-p buf)
-         (with-current-buffer buf
-           (let ((inhibit-read-only t))
-             (erase-buffer)
-             (insert (propertize
-                      (format "NetBox connectivity check failed: %s\n\nPress `g r' to retry."
-                              (error-message-string err))
-                      'face 'error)))))))))
+       (funcall on-err (error-message-string err))))))
+
+(defun netbox--run-with-connectivity-check (buf action)
+  "Verify NetBox is reachable, then call ACTION (a zero-argument function).
+If the check fails, show an error inside BUF instead of running ACTION.
+Calls ACTION directly when `netbox-pre-fetch-check' is nil."
+  (netbox--check-connectivity-async
+   action
+   (lambda (msg)
+     (when (buffer-live-p buf)
+       (with-current-buffer buf
+         (let ((inhibit-read-only t))
+           (erase-buffer)
+           (insert (propertize
+                    (format "NetBox unreachable: %s\n\nCheck `netbox-url' and network connectivity.\nPress `g r' to retry."
+                            msg)
+                    'face 'error))))))))
 
 
 (defun netbox-api-request (endpoint &optional params)
@@ -1799,14 +1804,19 @@ See also `netbox-precache' to warm the cache ahead of time."
          (columns  (and entry (symbol-value (cdr entry)))))
     (unless entry
       (user-error "Unknown NetBox resource: %s" resource))
-    (message "NetBox: fetching %s…" resource)
-    (netbox-api-list-async-cached
-     endpoint nil
-     (lambda (objects err)
-       (if err
-           (message "NetBox: error fetching %s: %s" resource err)
-         (netbox--jump-open-prompt resource
-                                   (netbox--build-candidates objects columns)))))))
+    (message "NetBox: checking connectivity…")
+    (netbox--check-connectivity-async
+     (lambda ()
+       (message "NetBox: fetching %s…" resource)
+       (netbox-api-list-async-cached
+        endpoint nil
+        (lambda (objects err)
+          (if err
+              (message "NetBox: error fetching %s: %s" resource err)
+            (netbox--jump-open-prompt resource
+                                      (netbox--build-candidates objects columns))))))
+     (lambda (msg)
+       (message "NetBox: API unreachable — %s" msg)))))
 
 ;;;###autoload
 (defun netbox-jump-to-device ()
@@ -1842,16 +1852,23 @@ Call this from your init file (or bind it) to warm the cache so that
   (if (or (null netbox-url) (string-empty-p netbox-url))
       (when (called-interactively-p 'any)
         (user-error "netbox-url is not configured"))
-    (dolist (resource netbox-precache-resources)
-      (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
-             (endpoint (and entry (symbol-value (car entry)))))
-        (when endpoint
-          (netbox-api-list-async-cached
-           endpoint nil
-           (lambda (objects err)
-             (if err
-                 (message "NetBox pre-cache: error for %s: %s" resource err)
-               (message "NetBox pre-cache: %d %s cached" (length objects) resource)))))))))
+    (let ((interactive-p (called-interactively-p 'any)))
+      (netbox--check-connectivity-async
+       (lambda ()
+         (dolist (resource netbox-precache-resources)
+           (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
+                  (endpoint (and entry (symbol-value (car entry)))))
+             (when endpoint
+               (netbox-api-list-async-cached
+                endpoint nil
+                (lambda (objects err)
+                  (if err
+                      (message "NetBox pre-cache: error for %s: %s" resource err)
+                    (message "NetBox pre-cache: %d %s cached"
+                             (length objects) resource))))))))
+       (lambda (msg)
+         (when interactive-p
+           (message "NetBox pre-cache: API not reachable — %s" msg)))))))
 
 (defun netbox--precache-reschedule ()
   "Cancel any existing idle pre-cache timer and start a new one if appropriate.
