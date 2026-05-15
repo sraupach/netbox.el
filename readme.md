@@ -70,6 +70,16 @@ Searches ALL resource types at once — results are merged into a single list
 showing Type, Name, Description, and URL.
 
 ```
+M-x netbox-jump
+```
+
+Fetches all objects of a chosen resource type and presents them in a
+`completing-read` prompt — pick any object by name and jump straight to its
+detail view.  Works with any completion framework (Vertico, Consult, Ivy, or
+the built-in default).  Typed shortcuts: `netbox-jump-to-device`,
+`netbox-jump-to-address`, `netbox-jump-to-vm`.
+
+```
 M-x netbox-check-config
 ```
 
@@ -88,17 +98,25 @@ Validates your configuration and tests live connectivity before you dig in.
 | `M-x netbox-dcim-devices`       | DCIM → Devices                |
 | `M-x netbox-dcim-interfaces`    | DCIM → Interfaces             |
 | `M-x netbox-dcim-cables`        | DCIM → Cables                 |
+| `M-x netbox-dcim-locations`     | DCIM → Locations              |
 | `M-x netbox-ipam-prefixes`      | IPAM → Prefixes               |
 | `M-x netbox-ipam-addresses`     | IPAM → IP Addresses           |
 | `M-x netbox-ipam-vlans`         | IPAM → VLANs                  |
 | `M-x netbox-ipam-vrfs`          | IPAM → VRFs                   |
+| `M-x netbox-ipam-ranges`        | IPAM → IP Ranges              |
 | `M-x netbox-virt-clusters`      | Virtualization → Clusters     |
 | `M-x netbox-virt-vms`           | Virtualization → VMs          |
+| `M-x netbox-virt-interfaces`    | Virtualization → VM Interfaces|
 | `M-x netbox-circuits`           | Circuits                      |
 | `M-x netbox-circuits-providers` | Circuit Providers             |
 | `M-x netbox-tenancy-tenants`    | Tenancy → Tenants             |
+| `M-x netbox-tenancy-contacts`   | Tenancy → Contacts            |
 | `M-x netbox-super-search`      | Search ALL types at once       |
 | `M-x netbox-search`            | Search a specific resource     |
+| `M-x netbox-jump`              | Jump to any object by name     |
+| `M-x netbox-jump-to-device`    | Jump directly to a Device      |
+| `M-x netbox-jump-to-address`   | Jump directly to an IP Address |
+| `M-x netbox-jump-to-vm`        | Jump directly to a VM          |
 
 ### Key bindings — list buffers
 
@@ -174,6 +192,8 @@ All settings live under the `netbox` customization group
 | `netbox-pre-fetch-check`      | `t`      | Ping NetBox before each fetch for fast error reporting         |
 | `netbox-connectivity-timeout` | `5`      | Timeout in seconds for the pre-fetch ping                      |
 | `netbox-cache-ttl`            | `300`    | Seconds to cache list responses · `0` disables caching         |
+| `netbox-precache-resources`   | `'("Devices" "IP Addresses" "Virtual Machines")` | Resources to pre-fetch for `netbox-jump` |
+| `netbox-precache-after-idle`  | `nil`    | Idle seconds before auto-pre-caching; `nil` disables           |
 | `netbox-evil-integration`     | `nil`    | Set to `t` to auto-configure evil keybindings when evil is loaded |
 
 ### Example configuration
@@ -226,6 +246,26 @@ Then only set `netbox-url` — the token is looked up automatically.
 `g r` in a list buffer **always** bypasses the cache and fetches live data.
 `M-x netbox-cache-clear` flushes the entire in-memory cache immediately.
 
+### Pre-caching for instant `netbox-jump`
+
+`netbox-jump` fetches objects asynchronously — Emacs stays responsive, but there
+is a short delay on the **first** call while the data loads.  Pre-caching
+eliminates that delay.
+
+**On-demand:** call `M-x netbox-precache` at any time to warm the cache for
+the resources listed in `netbox-precache-resources` (background, non-blocking).
+
+**Automatic on idle:** set `netbox-precache-after-idle` to a number of idle
+seconds and the pre-cache runs automatically once Emacs has been idle that long:
+
+```elisp
+;; Pre-cache Devices, IP Addresses and VMs after 10 s of idle time
+(setq netbox-precache-after-idle 10)
+
+;; Customise which resources are pre-cached
+(setq netbox-precache-resources '("Devices" "IP Addresses" "Prefixes"))
+```
+
 ### Window display behaviour
 
 | `netbox-reuse-window` | Behaviour                                      |
@@ -273,11 +313,11 @@ Each API endpoint is a `defvar` you can override for non-standard installs:
 
 Available endpoint variables:
 
-- `netbox-endpoint-dcim-sites`, `-racks`, `-devices`, `-interfaces`, `-cables`
-- `netbox-endpoint-ipam-prefixes`, `-addresses`, `-vlans`, `-vrfs`
-- `netbox-endpoint-virt-clusters`, `-vms`
+- `netbox-endpoint-dcim-sites`, `-racks`, `-devices`, `-interfaces`, `-cables`, `-locations`
+- `netbox-endpoint-ipam-prefixes`, `-addresses`, `-vlans`, `-vrfs`, `-ranges`
+- `netbox-endpoint-virt-clusters`, `-vms`, `-interfaces`
 - `netbox-endpoint-circuits-circuits`, `-providers`
-- `netbox-endpoint-tenancy-tenants`
+- `netbox-endpoint-tenancy-tenants`, `-contacts`
 
 ---
 
