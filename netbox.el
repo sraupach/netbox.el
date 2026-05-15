@@ -213,6 +213,15 @@ Manual refresh (\\[netbox-list-refresh]) always bypasses the cache."
   :type 'integer
   :group 'netbox)
 
+(defcustom netbox-evil-integration nil
+  "When non-nil, automatically configure evil keybindings for netbox.
+Evil normal-state bindings are set up via `netbox-evil-setup' as soon as evil
+is loaded.  Set this to t before loading netbox.el to enable:
+
+  (setq netbox-evil-integration t)"
+  :type 'boolean
+  :group 'netbox)
+
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -245,7 +254,7 @@ Uses `netbox-token' if non-empty, otherwise queries `auth-source'."
       (if found
           (let ((secret (plist-get found :secret)))
             (if (functionp secret) (funcall secret) secret))
-        (error "netbox: no API token found.  Set `netbox-token' or add an \
+        (error "Netbox: no API token found.  Set `netbox-token' or add an \
 entry to ~/.authinfo for host %s" host)))))
 
 
@@ -257,15 +266,15 @@ entry to ~/.authinfo for host %s" host)))))
 A valid value must have an http or https scheme and a non-empty host,
 e.g. \"https://netbox.example.com\" or \"http://192.168.1.10:8080\"."
   (when (or (null netbox-url) (string-empty-p netbox-url))
-    (error "netbox: `netbox-url' is not set — add (setq netbox-url \"https://netbox.example.com\") to your config"))
+    (error "Netbox: `netbox-url' is not set — add (setq netbox-url \"https://netbox.example.com\") to your config"))
   (let* ((parsed (url-generic-parse-url netbox-url))
          (scheme (url-type parsed))
          (host   (url-host parsed)))
     (unless (member scheme '("http" "https"))
-      (error "netbox: invalid netbox-url %S — scheme must be http or https, e.g. https://netbox.example.com"
+      (error "Netbox: invalid netbox-url %S — scheme must be http or https, e.g. https://netbox.example.com"
              netbox-url))
     (when (or (null host) (string-empty-p host))
-      (error "netbox: invalid netbox-url %S — missing hostname, e.g. https://netbox.example.com"
+      (error "Netbox: invalid netbox-url %S — missing hostname, e.g. https://netbox.example.com"
              netbox-url))))
 
 (defun netbox--build-url (endpoint &optional params)
@@ -371,7 +380,7 @@ Returns the parsed JSON response as an alist."
                                  url-proxy-services))
          (buf (url-retrieve-synchronously url t nil netbox-timeout)))
     (unless buf
-      (error "netbox: no response from %s" url))
+      (error "Netbox: no response from %s" url))
     (unwind-protect
         (with-current-buffer buf
           (netbox--parse-response))
@@ -447,7 +456,7 @@ ERROR-STRING is nil on success, a description string on failure."
      (funcall callback nil (error-message-string err)))))
 
 (defun netbox-api-list-async (endpoint params callback &optional acc offset)
-  "Async fetch of ALL results from paginated ENDPOINT.
+  "Async fetch of ALL results from paginated ENDPOINT using PARAMS.
 Recursively fetches pages, accumulating into ACC starting at OFFSET.
 Calls (CALLBACK ALL-RESULTS nil) on success or (CALLBACK nil ERROR) on failure.
 Shows incremental progress in the echo area."
@@ -549,7 +558,7 @@ populates the cache on success."
      (t             (format "%s" val)))))
 
 (defun netbox--nested-str (alist &rest keys)
-  "Walk nested alist via KEYS, returning the final value as a string."
+  "Walk nested ALIST via KEYS, returning the final value as a string."
   (let ((node alist))
     (dolist (k keys)
       (setq node (cdr (assoc k node))))
@@ -732,7 +741,7 @@ navigable objects as clickable buttons."
                   (netbox--render-detail obj)))))))))))
 
 (defun netbox--api-path-to-ui-path (api-path)
-  "Convert an API endpoint path to the corresponding NetBox web UI path.
+  "Convert API-PATH to the corresponding NetBox web UI path.
 Strips the leading `netbox-api-prefix' component, e.g.
 \"/api/dcim/devices\" → \"/dcim/devices\"."
   (let ((prefix (string-trim-right netbox-api-prefix "/")))
@@ -882,7 +891,7 @@ string in that column across all ENTRIES.  A padding of 2 is added."
                                          sized-columns)))
                   (let ((inhibit-read-only t))
                     (tabulated-list-init-header)
-                    (tabulated-list-print)))))))))))) 
+                    (tabulated-list-print))))))))))))
 
 (defun netbox-list-setup (endpoint columns title &optional search-q)
   "Set up current buffer as a netbox list for ENDPOINT.
@@ -1027,7 +1036,7 @@ Press RET to apply; clear the prompt and press RET to remove the filter."
     ("Location"    20 "location" "name")
     ("Status"      12 "status" "label")
     ("U height"     8 "u_height")
-    ("Device Count" 3 "device_count")) 
+    ("Device Count" 3 "device_count"))
   "Column spec for DCIM Racks list.")
 
 (defvar netbox-columns-dcim-devices
@@ -1283,7 +1292,7 @@ Press RET to apply; clear the prompt and press RET to remove the filter."
 
 ;;;###autoload
 (defun netbox-search (resource query)
-  "Search NetBox RESOURCE (chosen via completing-read) for QUERY string.
+  "Search NetBox RESOURCE (chosen via `completing-read') for QUERY string.
 Opens a list buffer filtered by the ?q= API parameter."
   (interactive
    (list (completing-read "Resource: " (mapcar #'car netbox--resource-alist) nil t)
@@ -1585,9 +1594,21 @@ Displays a diagnostic report in the *NetBox config check* buffer."
 
 
 ;;;; ──────────────────────────────────────────────────────────
-;;;; Evil mode integration (optional — only active when evil is loaded)
+;;;; Evil mode integration (optional)
 
-(with-eval-after-load 'evil
+(declare-function evil-set-initial-state      "evil-core"    (mode state))
+(declare-function evil-define-key*            "evil-core"    (&rest args))
+(declare-function evil-make-intercept-map     "evil-core"    (map &optional state))
+(declare-function evil-normalize-keymaps      "evil-core"    (&optional arg))
+
+(defun netbox-evil-setup ()
+  "Configure evil keybindings for netbox modes.
+This is called automatically when evil is loaded and
+`netbox-evil-integration' is non-nil.  To call it manually instead:
+
+  (setq netbox-evil-integration nil)
+  (with-eval-after-load \\='evil
+    (netbox-evil-setup))"
   (evil-set-initial-state 'netbox-list-mode         'normal)
   (evil-set-initial-state 'netbox-detail-mode       'normal)
   (evil-set-initial-state 'netbox-super-search-mode 'normal)
@@ -1628,6 +1649,10 @@ Displays a diagnostic report in the *NetBox config check* buffer."
   (add-hook 'netbox-list-mode-hook         #'evil-normalize-keymaps)
   (add-hook 'netbox-super-search-mode-hook #'evil-normalize-keymaps)
   (add-hook 'netbox-detail-mode-hook       #'evil-normalize-keymaps))
+
+(with-eval-after-load 'evil
+  (when netbox-evil-integration
+    (netbox-evil-setup)))
 
 
 ;;;; ──────────────────────────────────────────────────────────

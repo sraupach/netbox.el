@@ -28,7 +28,7 @@
 - 🔒 **Secure token storage** via `auth-source` / `~/.authinfo.gpg`
 - 🛡️ **Pre-fetch connectivity check** for fast, clear error messages
 - 🌍 **Per-request proxy support** — never touches global Emacs proxy state
-- 😈 **Evil mode integration** — normal-state bindings out of the box
+- 😈 **Evil mode integration** — opt-in normal-state bindings via `netbox-evil-integration`
 
 ---
 
@@ -174,6 +174,7 @@ All settings live under the `netbox` customization group
 | `netbox-pre-fetch-check`      | `t`      | Ping NetBox before each fetch for fast error reporting         |
 | `netbox-connectivity-timeout` | `5`      | Timeout in seconds for the pre-fetch ping                      |
 | `netbox-cache-ttl`            | `300`    | Seconds to cache list responses · `0` disables caching         |
+| `netbox-evil-integration`     | `nil`    | Set to `t` to auto-configure evil keybindings when evil is loaded |
 
 ### Example configuration
 
@@ -295,6 +296,36 @@ Each entry is `(HEADER WIDTH KEY...)` where `KEY...` is the path into the
 JSON object.  The `WIDTH` value is a **minimum** — columns automatically
 expand to fit the widest value after data loads.  Any column with the header
 `"Status"` automatically receives semantic colour-coding.
+
+---
+
+## Evil mode integration
+
+Evil normal-state keybindings are **not** active by default. Set
+`netbox-evil-integration` to `t` **before** loading netbox.el to enable them:
+
+```elisp
+(setq netbox-evil-integration t)
+(require 'netbox)
+```
+
+Or with `use-package`:
+
+```elisp
+(use-package netbox
+  :init
+  (setq netbox-evil-integration t)
+  :config
+  (setq netbox-url "https://netbox.example.com"
+        netbox-token "your-api-token-here"))
+```
+
+To **apply the setup manually** without the variable:
+
+```elisp
+(with-eval-after-load 'evil
+  (netbox-evil-setup))
+```
 
 ---
 
