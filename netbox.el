@@ -81,15 +81,19 @@
 (defvar netbox-endpoint-dcim-devices          nil)
 (defvar netbox-endpoint-dcim-interfaces       nil)
 (defvar netbox-endpoint-dcim-cables           nil)
+(defvar netbox-endpoint-dcim-locations        nil)
 (defvar netbox-endpoint-ipam-prefixes         nil)
 (defvar netbox-endpoint-ipam-addresses        nil)
 (defvar netbox-endpoint-ipam-vlans            nil)
 (defvar netbox-endpoint-ipam-vrfs             nil)
+(defvar netbox-endpoint-ipam-ranges           nil)
 (defvar netbox-endpoint-virt-clusters         nil)
 (defvar netbox-endpoint-virt-vms              nil)
+(defvar netbox-endpoint-virt-interfaces       nil)
 (defvar netbox-endpoint-circuits-circuits     nil)
 (defvar netbox-endpoint-circuits-providers    nil)
 (defvar netbox-endpoint-tenancy-tenants       nil)
+(defvar netbox-endpoint-tenancy-contacts      nil)
 (defvar netbox-endpoint-search               nil)
 
 (defun netbox--reset-endpoints (prefix)
@@ -101,15 +105,19 @@ PREFIX should be a string like \"/api\" (no trailing slash)."
           netbox-endpoint-dcim-devices       (concat p "/dcim/devices/")
           netbox-endpoint-dcim-interfaces    (concat p "/dcim/interfaces/")
           netbox-endpoint-dcim-cables        (concat p "/dcim/cables/")
+          netbox-endpoint-dcim-locations     (concat p "/dcim/locations/")
           netbox-endpoint-ipam-prefixes      (concat p "/ipam/prefixes/")
           netbox-endpoint-ipam-addresses     (concat p "/ipam/ip-addresses/")
           netbox-endpoint-ipam-vlans         (concat p "/ipam/vlans/")
           netbox-endpoint-ipam-vrfs          (concat p "/ipam/vrfs/")
+          netbox-endpoint-ipam-ranges        (concat p "/ipam/ip-ranges/")
           netbox-endpoint-virt-clusters      (concat p "/virtualization/clusters/")
           netbox-endpoint-virt-vms           (concat p "/virtualization/virtual-machines/")
+          netbox-endpoint-virt-interfaces    (concat p "/virtualization/interfaces/")
           netbox-endpoint-circuits-circuits  (concat p "/circuits/circuits/")
           netbox-endpoint-circuits-providers (concat p "/circuits/providers/")
           netbox-endpoint-tenancy-tenants    (concat p "/tenancy/tenants/")
+          netbox-endpoint-tenancy-contacts   (concat p "/tenancy/contacts/")
           netbox-endpoint-search             (concat p "/search/"))))
 
 
@@ -982,6 +990,7 @@ Press RET to apply; clear the prompt and press RET to remove the filter."
         (netbox--help-row "M-x netbox"                    "Open resource picker (main entry point)")
         (netbox--help-row "M-x netbox-super-search"       "Search ALL resource types at once")
         (netbox--help-row "M-x netbox-search"             "Search a specific resource type")
+        (netbox--help-row "M-x netbox-jump"               "Jump to any object by name (completing-read)")
         (netbox--help-row "M-x netbox-check-config"       "Validate config & test connectivity")
         (netbox--help-row "M-x netbox-cache-clear"        "Flush the entire response cache")
         (netbox--help-row "M-x netbox-dcim-sites"         "Browse DCIM → Sites")
@@ -989,15 +998,19 @@ Press RET to apply; clear the prompt and press RET to remove the filter."
         (netbox--help-row "M-x netbox-dcim-devices"       "Browse DCIM → Devices")
         (netbox--help-row "M-x netbox-dcim-interfaces"    "Browse DCIM → Interfaces")
         (netbox--help-row "M-x netbox-dcim-cables"        "Browse DCIM → Cables")
+        (netbox--help-row "M-x netbox-dcim-locations"     "Browse DCIM → Locations")
         (netbox--help-row "M-x netbox-ipam-prefixes"      "Browse IPAM → Prefixes")
         (netbox--help-row "M-x netbox-ipam-addresses"     "Browse IPAM → IP Addresses")
         (netbox--help-row "M-x netbox-ipam-vlans"         "Browse IPAM → VLANs")
         (netbox--help-row "M-x netbox-ipam-vrfs"          "Browse IPAM → VRFs")
+        (netbox--help-row "M-x netbox-ipam-ranges"        "Browse IPAM → IP Ranges")
         (netbox--help-row "M-x netbox-virt-clusters"      "Browse Virtualization → Clusters")
         (netbox--help-row "M-x netbox-virt-vms"           "Browse Virtualization → VMs")
+        (netbox--help-row "M-x netbox-virt-interfaces"    "Browse Virtualization → VM Interfaces")
         (netbox--help-row "M-x netbox-circuits"           "Browse Circuits")
         (netbox--help-row "M-x netbox-circuits-providers" "Browse Circuit Providers")
         (netbox--help-row "M-x netbox-tenancy-tenants"    "Browse Tenancy → Tenants")
+        (netbox--help-row "M-x netbox-tenancy-contacts"   "Browse Tenancy → Contacts")
         (insert "\n")
 
         (insert (propertize "Configuration  (setq in init.el or M-x customize-group RET netbox)\n"
@@ -1139,6 +1152,39 @@ Press RET to apply; clear the prompt and press RET to remove the filter."
     ("Description" 45 "description"))
   "Column spec for Tenancy Tenants list.")
 
+(defvar netbox-columns-dcim-locations
+  '(("Name"        25 "name")
+    ("Site"        20 "site" "name")
+    ("Parent"      20 "parent" "name")
+    ("Status"      12 "status" "label")
+    ("Description" 40 "description"))
+  "Column spec for DCIM Locations list.")
+
+(defvar netbox-columns-ipam-ranges
+  '(("Start Address" 20 "start_address")
+    ("End Address"   20 "end_address")
+    ("VRF"           15 "vrf" "name")
+    ("Status"        12 "status" "label")
+    ("Tenant"        15 "tenant" "name")
+    ("Description"   35 "description"))
+  "Column spec for IPAM IP Ranges list.")
+
+(defvar netbox-columns-tenancy-contacts
+  '(("Name"        25 "name")
+    ("Title"       20 "title")
+    ("Phone"       18 "phone")
+    ("Email"       30 "email")
+    ("Group"       20 "group" "name"))
+  "Column spec for Tenancy Contacts list.")
+
+(defvar netbox-columns-virt-interfaces
+  '(("Name"        25 "name")
+    ("VM"          25 "virtual_machine" "name")
+    ("MAC"         18 "mac_address")
+    ("Enabled"      8 "enabled")
+    ("Description" 35 "description"))
+  "Column spec for Virtualization VM Interfaces list.")
+
 
 ;;;; ──────────────────────────────────────────────────────────
 ;;;; Public list commands
@@ -1269,25 +1315,65 @@ Press RET to apply; clear the prompt and press RET to remove the filter."
                        netbox-columns-tenancy-tenants "Tenants")
     (netbox--display-buffer (current-buffer))))
 
+;;;###autoload
+(defun netbox-dcim-locations ()
+  "Browse NetBox DCIM Locations."
+  (interactive)
+  (with-current-buffer (get-buffer-create "*NetBox: Locations*")
+    (netbox-list-setup netbox-endpoint-dcim-locations
+                       netbox-columns-dcim-locations "Locations")
+    (netbox--display-buffer (current-buffer))))
+
+;;;###autoload
+(defun netbox-ipam-ranges ()
+  "Browse NetBox IPAM IP Ranges."
+  (interactive)
+  (with-current-buffer (get-buffer-create "*NetBox: IP Ranges*")
+    (netbox-list-setup netbox-endpoint-ipam-ranges
+                       netbox-columns-ipam-ranges "IP Ranges")
+    (netbox--display-buffer (current-buffer))))
+
+;;;###autoload
+(defun netbox-tenancy-contacts ()
+  "Browse NetBox Tenancy Contacts."
+  (interactive)
+  (with-current-buffer (get-buffer-create "*NetBox: Contacts*")
+    (netbox-list-setup netbox-endpoint-tenancy-contacts
+                       netbox-columns-tenancy-contacts "Contacts")
+    (netbox--display-buffer (current-buffer))))
+
+;;;###autoload
+(defun netbox-virt-interfaces ()
+  "Browse NetBox Virtualization VM Interfaces."
+  (interactive)
+  (with-current-buffer (get-buffer-create "*NetBox: VM Interfaces*")
+    (netbox-list-setup netbox-endpoint-virt-interfaces
+                       netbox-columns-virt-interfaces "VM Interfaces")
+    (netbox--display-buffer (current-buffer))))
+
 
 ;;;; ──────────────────────────────────────────────────────────
 ;;;; Search
 
 (defconst netbox--resource-alist
-  '(("Sites"            . (netbox-endpoint-dcim-sites        . netbox-columns-dcim-sites))
-    ("Racks"            . (netbox-endpoint-dcim-racks        . netbox-columns-dcim-racks))
-    ("Devices"          . (netbox-endpoint-dcim-devices      . netbox-columns-dcim-devices))
-    ("Interfaces"       . (netbox-endpoint-dcim-interfaces   . netbox-columns-dcim-interfaces))
-    ("Cables"           . (netbox-endpoint-dcim-cables       . netbox-columns-dcim-cables))
-    ("Prefixes"         . (netbox-endpoint-ipam-prefixes     . netbox-columns-ipam-prefixes))
-    ("IP Addresses"     . (netbox-endpoint-ipam-addresses    . netbox-columns-ipam-addresses))
-    ("VLANs"            . (netbox-endpoint-ipam-vlans        . netbox-columns-ipam-vlans))
-    ("VRFs"             . (netbox-endpoint-ipam-vrfs         . netbox-columns-ipam-vrfs))
-    ("Clusters"         . (netbox-endpoint-virt-clusters     . netbox-columns-virt-clusters))
-    ("Virtual Machines" . (netbox-endpoint-virt-vms          . netbox-columns-virt-vms))
-    ("Circuits"         . (netbox-endpoint-circuits-circuits . netbox-columns-circuits-circuits))
-    ("Providers"        . (netbox-endpoint-circuits-providers . netbox-columns-circuits-providers))
-    ("Tenants"          . (netbox-endpoint-tenancy-tenants   . netbox-columns-tenancy-tenants)))
+  '(("Sites"            . (netbox-endpoint-dcim-sites          . netbox-columns-dcim-sites))
+    ("Racks"            . (netbox-endpoint-dcim-racks          . netbox-columns-dcim-racks))
+    ("Devices"          . (netbox-endpoint-dcim-devices        . netbox-columns-dcim-devices))
+    ("Interfaces"       . (netbox-endpoint-dcim-interfaces     . netbox-columns-dcim-interfaces))
+    ("Cables"           . (netbox-endpoint-dcim-cables         . netbox-columns-dcim-cables))
+    ("Locations"        . (netbox-endpoint-dcim-locations      . netbox-columns-dcim-locations))
+    ("Prefixes"         . (netbox-endpoint-ipam-prefixes       . netbox-columns-ipam-prefixes))
+    ("IP Addresses"     . (netbox-endpoint-ipam-addresses      . netbox-columns-ipam-addresses))
+    ("VLANs"            . (netbox-endpoint-ipam-vlans          . netbox-columns-ipam-vlans))
+    ("VRFs"             . (netbox-endpoint-ipam-vrfs           . netbox-columns-ipam-vrfs))
+    ("IP Ranges"        . (netbox-endpoint-ipam-ranges         . netbox-columns-ipam-ranges))
+    ("Clusters"         . (netbox-endpoint-virt-clusters       . netbox-columns-virt-clusters))
+    ("Virtual Machines" . (netbox-endpoint-virt-vms            . netbox-columns-virt-vms))
+    ("VM Interfaces"    . (netbox-endpoint-virt-interfaces     . netbox-columns-virt-interfaces))
+    ("Circuits"         . (netbox-endpoint-circuits-circuits   . netbox-columns-circuits-circuits))
+    ("Providers"        . (netbox-endpoint-circuits-providers  . netbox-columns-circuits-providers))
+    ("Tenants"          . (netbox-endpoint-tenancy-tenants     . netbox-columns-tenancy-tenants))
+    ("Contacts"         . (netbox-endpoint-tenancy-contacts    . netbox-columns-tenancy-contacts)))
   "Alist mapping resource display names to (ENDPOINT-VAR . COLUMNS-VAR) pairs.")
 
 ;;;###autoload
@@ -1631,6 +1717,90 @@ Displays a diagnostic report in the *NetBox config check* buffer."
         (insert "\n")
         (netbox-config-check-mode)))
     (netbox--display-buffer buf)))
+
+
+;;;; ──────────────────────────────────────────────────────────
+;;;; Jump / completing-read integration
+
+(defun netbox--object-display-string (obj columns)
+  "Build a compact display string for OBJ using the first few COLUMNS.
+Returns a string of the form \"<col1>  <col2>  …\" using up to three columns,
+skipping any empty values.  Used as completion candidates in `netbox-jump'."
+  (let ((parts nil))
+    (dolist (col (seq-take columns 3))
+      (let ((text (apply #'netbox--nested-str obj (cddr col))))
+        (unless (string-empty-p text)
+          (push text parts))))
+    (mapconcat #'identity (nreverse parts) "  ")))
+
+(defun netbox--candidates (endpoint columns)
+  "Fetch all objects from ENDPOINT and return an alist of (DISPLAY . OBJ).
+DISPLAY is built via `netbox--object-display-string' using COLUMNS.
+Uses the synchronous API; shows a brief message while fetching."
+  (message "NetBox: fetching candidates…")
+  (let ((objects (netbox-api-list endpoint nil)))
+    (message "NetBox: %d candidates loaded" (length objects))
+    (mapcar (lambda (obj)
+              (cons (netbox--object-display-string obj columns) obj))
+            objects)))
+
+(defun netbox--completing-read-object (resource)
+  "Prompt the user to select an object from RESOURCE using `completing-read'.
+RESOURCE must be a key in `netbox--resource-alist'.
+Returns the selected object alist, or nil if RESOURCE is unknown."
+  (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
+         (endpoint (and entry (symbol-value (car entry))))
+         (columns  (and entry (symbol-value (cdr entry)))))
+    (unless entry
+      (user-error "Unknown NetBox resource: %s" resource))
+    (let* ((candidates (netbox--candidates endpoint columns))
+           (table      (lambda (str pred action)
+                         (if (eq action 'metadata)
+                             '(metadata (category . netbox-object))
+                           (complete-with-action action candidates str pred))))
+           (choice (completing-read
+                    (format "NetBox %s: " resource)
+                    table nil t)))
+      (cdr (assoc choice candidates)))))
+
+;;;###autoload
+(defun netbox-jump (&optional resource)
+  "Jump directly to a NetBox object by name using `completing-read'.
+Prompts for a RESOURCE type, then for an object within that type.
+Opens the detail view for the selected object.
+
+Works with any completion framework (Vertico, Consult, Ivy, default).
+With a prefix argument, skips the resource prompt and uses RESOURCE directly."
+  (interactive
+   (list (completing-read "NetBox resource: "
+                          (mapcar #'car netbox--resource-alist)
+                          nil t)))
+  (when (or (null resource) (string-empty-p resource))
+    (user-error "No resource selected"))
+  (let* ((obj      (netbox--completing-read-object resource))
+         (api-url  (cdr (assoc "url" obj)))
+         (nav      (and api-url (netbox--parse-api-url api-url))))
+    (if nav
+        (netbox-show-detail (car nav) (cdr nav))
+      (user-error "Cannot determine endpoint for selected object"))))
+
+;;;###autoload
+(defun netbox-jump-to-device ()
+  "Jump directly to a NetBox Device by name using `completing-read'."
+  (interactive)
+  (netbox-jump "Devices"))
+
+;;;###autoload
+(defun netbox-jump-to-address ()
+  "Jump directly to a NetBox IP Address using `completing-read'."
+  (interactive)
+  (netbox-jump "IP Addresses"))
+
+;;;###autoload
+(defun netbox-jump-to-vm ()
+  "Jump directly to a NetBox Virtual Machine by name using `completing-read'."
+  (interactive)
+  (netbox-jump "Virtual Machines"))
 
 
 ;;;; ──────────────────────────────────────────────────────────

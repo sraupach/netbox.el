@@ -70,6 +70,16 @@ Searches ALL resource types at once — results are merged into a single list
 showing Type, Name, Description, and URL.
 
 ```
+M-x netbox-jump
+```
+
+Fetches all objects of a chosen resource type and presents them in a
+`completing-read` prompt — pick any object by name and jump straight to its
+detail view.  Works with any completion framework (Vertico, Consult, Ivy, or
+the built-in default).  Typed shortcuts: `netbox-jump-to-device`,
+`netbox-jump-to-address`, `netbox-jump-to-vm`.
+
+```
 M-x netbox-check-config
 ```
 
@@ -88,17 +98,25 @@ Validates your configuration and tests live connectivity before you dig in.
 | `M-x netbox-dcim-devices`       | DCIM → Devices                |
 | `M-x netbox-dcim-interfaces`    | DCIM → Interfaces             |
 | `M-x netbox-dcim-cables`        | DCIM → Cables                 |
+| `M-x netbox-dcim-locations`     | DCIM → Locations              |
 | `M-x netbox-ipam-prefixes`      | IPAM → Prefixes               |
 | `M-x netbox-ipam-addresses`     | IPAM → IP Addresses           |
 | `M-x netbox-ipam-vlans`         | IPAM → VLANs                  |
 | `M-x netbox-ipam-vrfs`          | IPAM → VRFs                   |
+| `M-x netbox-ipam-ranges`        | IPAM → IP Ranges              |
 | `M-x netbox-virt-clusters`      | Virtualization → Clusters     |
 | `M-x netbox-virt-vms`           | Virtualization → VMs          |
+| `M-x netbox-virt-interfaces`    | Virtualization → VM Interfaces|
 | `M-x netbox-circuits`           | Circuits                      |
 | `M-x netbox-circuits-providers` | Circuit Providers             |
 | `M-x netbox-tenancy-tenants`    | Tenancy → Tenants             |
+| `M-x netbox-tenancy-contacts`   | Tenancy → Contacts            |
 | `M-x netbox-super-search`      | Search ALL types at once       |
 | `M-x netbox-search`            | Search a specific resource     |
+| `M-x netbox-jump`              | Jump to any object by name     |
+| `M-x netbox-jump-to-device`    | Jump directly to a Device      |
+| `M-x netbox-jump-to-address`   | Jump directly to an IP Address |
+| `M-x netbox-jump-to-vm`        | Jump directly to a VM          |
 
 ### Key bindings — list buffers
 
