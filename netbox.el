@@ -174,9 +174,21 @@ Set to nil to disable verification, e.g. for self-signed internal CAs."
 
 (defcustom netbox-reuse-window t
   "When non-nil (default), open NetBox buffers in the selected window.
-When nil, open each buffer in a new window instead."
+When nil, the first NetBox buffer opens in a new window that is then
+reused for all subsequent NetBox navigation.  Quitting the initial
+buffer also closes that window."
   :type 'boolean
   :group 'netbox)
+
+(defvar netbox--managed-window nil
+  "Window created for NetBox when `netbox-reuse-window' is nil.
+Set on first display; cleared when the root buffer is quit.")
+
+(defvar-local netbox--is-root-buffer nil
+  "Non-nil in the buffer that opened the managed NetBox window.
+Quitting this buffer also deletes `netbox--managed-window'.
+Declared permanent-local so it survives major-mode re-initialisation.")
+(put 'netbox--is-root-buffer 'permanent-local t)
 
 (defcustom netbox-pre-fetch-check t
   "When non-nil (default), verify NetBox is reachable before each API fetch.
@@ -224,7 +236,7 @@ Manual refresh (\\[netbox-list-refresh]) always bypasses the cache."
 (defcustom netbox-evil-integration nil
   "When non-nil, automatically configure evil keybindings for netbox.
 Evil normal-state bindings are set up via `netbox-evil-setup' as soon as evil
-is loaded.  Set this to t before loading netbox.el to enable:
+is loaded.  Set this to t before or after loading netbox.el:
 
   (setq netbox-evil-integration t)"
   :type 'boolean
@@ -346,7 +358,32 @@ or an http+https proxy spec for any other string."
   "Display BUF according to `netbox-reuse-window'."
   (if netbox-reuse-window
       (switch-to-buffer buf)
-    (switch-to-buffer-other-window buf)))
+    (if (and (windowp netbox--managed-window)
+             (window-live-p netbox--managed-window))
+        (progn
+          (select-window netbox--managed-window)
+          (switch-to-buffer buf))
+      (switch-to-buffer-other-window buf)
+      (setq netbox--managed-window (selected-window))
+      (with-current-buffer buf
+        (setq netbox--is-root-buffer t)))))
+
+(defun netbox-quit ()
+  "Quit the current NetBox buffer.
+When `netbox-reuse-window' is nil and this is the root buffer (the first
+one shown in the managed window), also delete that window."
+  (interactive)
+  (let ((is-root (and (not netbox-reuse-window)
+                      netbox--is-root-buffer
+                      (windowp netbox--managed-window)
+                      (window-live-p netbox--managed-window)
+                      (not (one-window-p))))
+        (win netbox--managed-window))
+    (kill-current-buffer)
+    (when is-root
+      (when (window-live-p win)
+        (delete-window win))
+      (setq netbox--managed-window nil))))
 
 (defun netbox--check-connectivity-async (on-ok on-err)
   "Asynchronously verify NetBox is reachable, then call ON-OK or ON-ERR.
@@ -636,7 +673,7 @@ Status columns (header \"Status\") are propertized with a semantic face."
 
 (defvar netbox-detail-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "q")         #'kill-current-buffer)
+    (define-key map (kbd "q")         #'netbox-quit)
     (define-key map (kbd "g r")       #'netbox-detail-refresh)
     (define-key map (kbd "o")         #'netbox-detail-open-url)
     (define-key map (kbd "?")         #'netbox-help)
@@ -841,7 +878,7 @@ by the value.  The value is copied as a plain string (no text properties)."
     (define-key map (kbd "RET") #'netbox-list-open-detail)
     (define-key map (kbd "g r") #'netbox-list-refresh)
     (define-key map (kbd "o")   #'netbox-list-open-url)
-    (define-key map (kbd "q")   #'kill-current-buffer)
+    (define-key map (kbd "q")   #'netbox-quit)
     (define-key map (kbd "/")   #'netbox-list-search)
     (define-key map (kbd "F")   #'netbox-list-edit-filter)
     (define-key map (kbd "?")   #'netbox-help)
@@ -1461,7 +1498,7 @@ Parses the object's API URL to determine the endpoint and ID."
     (define-key map (kbd "RET") #'netbox--super-search-open-detail)
     (define-key map (kbd "g r") #'netbox-super-search-refresh)
     (define-key map (kbd "o")   #'netbox--super-search-open-browser-url)
-    (define-key map (kbd "q")   #'kill-current-buffer)
+    (define-key map (kbd "q")   #'netbox-quit)
     (define-key map (kbd "/")   #'netbox-super-search-requery)
     (define-key map (kbd "F")   #'netbox-super-search-edit-query)
     (define-key map (kbd "?")   #'netbox-help)
@@ -1620,7 +1657,7 @@ programmatically."
 
 (defvar netbox-config-check-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "q") #'kill-current-buffer)
+    (define-key map (kbd "q") #'netbox-quit)
     map)
   "Keymap for `netbox-config-check-mode'.")
 
@@ -1916,51 +1953,49 @@ This is called automatically when evil is loaded and
   (evil-set-initial-state 'netbox-detail-mode       'normal)
   (evil-set-initial-state 'netbox-super-search-mode 'normal)
   (evil-set-initial-state 'netbox-config-check-mode 'normal)
-  (evil-define-key* 'normal netbox-list-mode-map
+  (evil-define-key 'normal netbox-list-mode-map
     (kbd "RET") #'netbox-list-open-detail
     (kbd "g r") #'netbox-list-refresh
     (kbd "o")   #'netbox-list-open-url
-    (kbd "q")   #'kill-current-buffer
+    (kbd "q")   #'netbox-quit
     (kbd "/")   #'netbox-list-search
     (kbd "F")   #'netbox-list-edit-filter
     (kbd "?")   #'netbox-help)
-  (evil-define-key* 'normal netbox-super-search-mode-map
+  (evil-define-key 'normal netbox-super-search-mode-map
     (kbd "RET") #'netbox--super-search-open-detail
     (kbd "g r") #'netbox-super-search-refresh
     (kbd "o")   #'netbox--super-search-open-browser-url
-    (kbd "q")   #'kill-current-buffer
+    (kbd "q")   #'netbox-quit
     (kbd "/")   #'netbox-super-search-requery
     (kbd "F")   #'netbox-super-search-edit-query
     (kbd "?")   #'netbox-help)
-  (evil-define-key* 'normal netbox-detail-mode-map
+  (evil-define-key 'normal netbox-detail-mode-map
     (kbd "g r")       #'netbox-detail-refresh
     (kbd "o")         #'netbox-detail-open-url
-    (kbd "q")         #'kill-current-buffer
+    (kbd "q")         #'netbox-quit
     (kbd "y")         #'netbox-detail-yank-value
     (kbd "?")         #'netbox-help
     (kbd "TAB")       #'netbox-detail-next-button
     (kbd "<tab>")     #'netbox-detail-next-button
     (kbd "<backtab>") #'netbox-detail-prev-button
     (kbd "S-TAB")     #'netbox-detail-prev-button)
-  (evil-define-key* 'normal netbox-config-check-mode-map
-    (kbd "q")   #'kill-current-buffer)
-  ;; Ensure our mode maps win over ALL evil states including motion
-  ;; (which defines F, /, ? etc).  intercept-maps have highest priority.
-  ;; Called AFTER evil-define-key* so all bindings are present in the map.
-  (evil-make-intercept-map netbox-list-mode-map         'normal)
-  (evil-make-intercept-map netbox-super-search-mode-map 'normal)
-  (evil-make-intercept-map netbox-detail-mode-map       'normal)
-  (evil-make-intercept-map netbox-config-check-mode-map 'normal)
-  ;; Normalize evil keymaps whenever a buffer enters a netbox mode so that
-  ;; the overriding maps above take effect immediately in every new buffer.
-  (add-hook 'netbox-list-mode-hook         #'evil-normalize-keymaps)
-  (add-hook 'netbox-super-search-mode-hook #'evil-normalize-keymaps)
-  (add-hook 'netbox-detail-mode-hook       #'evil-normalize-keymaps)
-  (add-hook 'netbox-config-check-mode-hook #'evil-normalize-keymaps))
+  (evil-define-key 'normal netbox-config-check-mode-map
+    (kbd "q")   #'netbox-quit)
+  ;; Remove the regular define-key bindings to avoid conflicts
+  ;; since evil-define-key above now handles all states
+  (evil-normalize-keymaps))
 
 (with-eval-after-load 'evil
   (when netbox-evil-integration
     (netbox-evil-setup)))
+
+;; Fallback: if evil was already loaded when netbox.el was required, and
+;; netbox-evil-integration is set later in init (after `require'), the
+;; with-eval-after-load above already ran and saw nil.  Re-check after init.
+(add-hook 'after-init-hook
+          (lambda ()
+            (when (and netbox-evil-integration (featurep 'evil))
+              (netbox-evil-setup))))
 
 
 ;;;; ──────────────────────────────────────────────────────────
