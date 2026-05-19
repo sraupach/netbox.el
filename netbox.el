@@ -255,11 +255,7 @@ call to `netbox-jump' for these resources shows the prompt without delay."
 Set to a positive integer (e.g. 10) to trigger `netbox-precache' once Emacs
 has been idle for that many seconds.  nil disables automatic pre-caching."
   :type '(choice (const :tag "Disabled" nil) integer)
-  :group 'netbox
-  :set (lambda (sym val)
-         (set-default sym val)
-         (when (fboundp 'netbox--precache-reschedule)
-           (netbox--precache-reschedule))))
+  :group 'netbox)
 
 
 
@@ -1931,6 +1927,11 @@ Called automatically when `netbox-precache-after-idle' changes."
              (integerp netbox-precache-after-idle))
     (setq netbox--precache-idle-timer
           (run-with-idle-timer netbox-precache-after-idle t #'netbox-precache))))
+
+(add-variable-watcher
+ 'netbox-precache-after-idle
+ (lambda (_sym _val _op _where)
+   (run-at-time 0 nil #'netbox--precache-reschedule)))
 
 
 ;;;; ──────────────────────────────────────────────────────────
