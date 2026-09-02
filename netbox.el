@@ -58,14 +58,33 @@
 (require 'tabulated-list)
 (require 'browse-url)
 (require 'cl-lib)
+(require 'seq)
 (require 'subr-x)
 
 ;; Silence byte-compiler warnings for optional evil functions.
-(declare-function evil-set-initial-state    "evil" (mode state))
-(declare-function evil-define-key*          "evil" (state keymap &rest bindings))
-(declare-function evil-make-overriding-map  "evil" (keymap &optional state))
-(declare-function evil-make-intercept-map  "evil" (keymap &optional state))
-(declare-function evil-normalize-keymaps    "evil" ())
+(declare-function evil-set-initial-state "evil-core" (mode state))
+(declare-function evil-normalize-keymaps "evil-core" (&optional arg))
+
+(defmacro netbox--evil-define-key (state keymap &rest bindings)
+  "Bind BINDINGS for STATE in KEYMAP using Evil's `evil-define-key'.
+STATE, KEYMAP and BINDINGS are passed through to `evil-define-key'
+exactly as written, unevaluated, just like a direct call to it would.
+
+`evil-define-key' is a macro, not a function.  If Evil is not loaded
+while this file is byte-compiled (the normal case, since Evil is an
+optional dependency), the byte-compiler cannot know that and instead
+compiles the call as an ordinary function call — which fails at run
+time with \"Invalid function: evil-define-key\" once Evil actually
+defines it as a macro.  Routing the call through `eval' defers macro
+expansion to call time, when the real Evil macro definition (if any)
+is in effect, regardless of what was known at compile time.
+
+Note: the arguments must stay unevaluated forms (e.g. KEYMAP must
+remain the bare symbol naming the keymap variable, not its value)
+because `evil-define-key' itself relies on seeing that literal syntax
+to resolve and track the keymap correctly."
+  (declare (indent 2))
+  `(eval '(evil-define-key ,state ,keymap ,@bindings) t))
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -94,31 +113,43 @@
 (defvar netbox-endpoint-circuits-providers    nil)
 (defvar netbox-endpoint-tenancy-tenants       nil)
 (defvar netbox-endpoint-tenancy-contacts      nil)
-(defvar netbox-endpoint-search               nil)
 
-(defun netbox--reset-endpoints (prefix)
+(defconst netbox--endpoint-specs
+  '((netbox-endpoint-dcim-sites            . "/dcim/sites/")
+    (netbox-endpoint-dcim-racks            . "/dcim/racks/")
+    (netbox-endpoint-dcim-devices          . "/dcim/devices/")
+    (netbox-endpoint-dcim-interfaces       . "/dcim/interfaces/")
+    (netbox-endpoint-dcim-cables           . "/dcim/cables/")
+    (netbox-endpoint-dcim-locations        . "/dcim/locations/")
+    (netbox-endpoint-ipam-prefixes         . "/ipam/prefixes/")
+    (netbox-endpoint-ipam-addresses        . "/ipam/ip-addresses/")
+    (netbox-endpoint-ipam-vlans            . "/ipam/vlans/")
+    (netbox-endpoint-ipam-vrfs             . "/ipam/vrfs/")
+    (netbox-endpoint-ipam-ranges           . "/ipam/ip-ranges/")
+    (netbox-endpoint-virt-clusters         . "/virtualization/clusters/")
+    (netbox-endpoint-virt-vms              . "/virtualization/virtual-machines/")
+    (netbox-endpoint-virt-interfaces       . "/virtualization/interfaces/")
+    (netbox-endpoint-circuits-circuits     . "/circuits/circuits/")
+    (netbox-endpoint-circuits-providers    . "/circuits/providers/")
+    (netbox-endpoint-tenancy-tenants       . "/tenancy/tenants/")
+    (netbox-endpoint-tenancy-contacts      . "/tenancy/contacts/"))
+  "Endpoint variables and their paths relative to `netbox-api-prefix'.")
+
+(defun netbox--reset-endpoints (prefix &optional old-prefix)
   "Set all `netbox-endpoint-*' variables using PREFIX as the API path prefix.
-PREFIX should be a string like \"/api\" (no trailing slash)."
-  (let ((p (string-trim-right prefix "/")))
-    (setq netbox-endpoint-dcim-sites         (concat p "/dcim/sites/")
-          netbox-endpoint-dcim-racks         (concat p "/dcim/racks/")
-          netbox-endpoint-dcim-devices       (concat p "/dcim/devices/")
-          netbox-endpoint-dcim-interfaces    (concat p "/dcim/interfaces/")
-          netbox-endpoint-dcim-cables        (concat p "/dcim/cables/")
-          netbox-endpoint-dcim-locations     (concat p "/dcim/locations/")
-          netbox-endpoint-ipam-prefixes      (concat p "/ipam/prefixes/")
-          netbox-endpoint-ipam-addresses     (concat p "/ipam/ip-addresses/")
-          netbox-endpoint-ipam-vlans         (concat p "/ipam/vlans/")
-          netbox-endpoint-ipam-vrfs          (concat p "/ipam/vrfs/")
-          netbox-endpoint-ipam-ranges        (concat p "/ipam/ip-ranges/")
-          netbox-endpoint-virt-clusters      (concat p "/virtualization/clusters/")
-          netbox-endpoint-virt-vms           (concat p "/virtualization/virtual-machines/")
-          netbox-endpoint-virt-interfaces    (concat p "/virtualization/interfaces/")
-          netbox-endpoint-circuits-circuits  (concat p "/circuits/circuits/")
-          netbox-endpoint-circuits-providers (concat p "/circuits/providers/")
-          netbox-endpoint-tenancy-tenants    (concat p "/tenancy/tenants/")
-          netbox-endpoint-tenancy-contacts   (concat p "/tenancy/contacts/")
-          netbox-endpoint-search             (concat p "/search/"))))
+PREFIX should be a string like \"/api\" (no trailing slash).
+When OLD-PREFIX is non-nil, update only endpoints which still use the
+corresponding old default, preserving individually customized values."
+  (let ((new-prefix (string-trim-right prefix "/"))
+        (old-prefix (and old-prefix (string-trim-right old-prefix "/"))))
+    (dolist (spec netbox--endpoint-specs)
+      (let* ((variable (car spec))
+             (suffix (cdr spec))
+             (current (and (boundp variable) (symbol-value variable)))
+             (old-default (and old-prefix (concat old-prefix suffix))))
+        (when (or (null current)
+                  (and old-default (equal current old-default)))
+          (set variable (concat new-prefix suffix)))))))
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -153,8 +184,9 @@ new prefix, unless you have already overridden them individually."
   :type 'string
   :group 'netbox
   :set (lambda (sym val)
-         (set-default sym val)
-         (netbox--reset-endpoints val)))
+         (let ((old-value (and (boundp sym) (default-value sym))))
+           (set-default sym val)
+           (netbox--reset-endpoints val old-value))))
 
 (defcustom netbox-default-page-size 50
   "Number of results to request per API page."
@@ -464,13 +496,20 @@ Returns a flat list of result alists."
                                   `(("limit"  . ,limit)
                                     ("offset" . ,(number-to-string offset)))))
              (response (netbox-api-request endpoint page-params))
-             (count    (or (cdr (assoc "count"   response)) 0))
-             (results  (or (cdr (assoc "results" response)) '())))
+             (count    (cdr (assoc "count" response)))
+             (results  (or (cdr (assoc "results" response)) '()))
+             (has-next (cdr (assoc "next" response)))
+             (next-offset (+ offset (length results))))
         (setq all-results (append all-results results))
-        (setq offset (+ offset (length results)))
-        (when (or (null (cdr (assoc "next" response)))
-                  (>= offset count))
-          (setq done t))))
+        (cond
+         ((null has-next)
+          (setq done t))
+         ((null results)
+          (error "Netbox: pagination returned no results but advertised a next page"))
+         ((and (numberp count) (>= next-offset count))
+          (setq done t))
+         (t
+          (setq offset next-offset)))))
     all-results))
 
 (defun netbox-api-get (endpoint id)
@@ -541,10 +580,19 @@ Shows incremental progress in the echo area."
                 (acc     (append acc results))
                 (loaded  (length acc)))
            (message "NetBox: loading… (%d/%d)" loaded count)
-           (if (and has-next (< loaded count))
-               (netbox-api-list-async endpoint params callback acc loaded)
+           (cond
+            ((null has-next)
              (message "NetBox: loaded %d" loaded)
-             (funcall callback acc nil))))))))
+             (funcall callback acc nil))
+            ((null results)
+             (funcall callback nil
+                      "Pagination returned no results but advertised a next page"))
+            ((and (numberp count) (>= loaded count))
+             (message "NetBox: loaded %d" loaded)
+             (funcall callback acc nil))
+            (t
+             (netbox-api-list-async
+              endpoint params callback acc (+ offset (length results)))))))))))
 
 (defun netbox-api-get-async (endpoint id callback)
   "Async fetch of a single object from ENDPOINT by ID.
@@ -562,17 +610,25 @@ Calls (CALLBACK RESULT nil) on success or (CALLBACK nil ERROR) on failure."
 Keys are (ENDPOINT . PARAMS-STRING) cons cells.
 Values are (TIMESTAMP . RESULTS) cons cells.")
 
+(defconst netbox--cache-miss (make-symbol "netbox-cache-miss")
+  "Sentinel returned when no live cache entry exists.")
+
 (defun netbox--cache-key (endpoint params)
   "Return the cache key for ENDPOINT and PARAMS alist."
   (cons endpoint
         (mapconcat (lambda (p) (concat (car p) "=" (cdr p))) params "&")))
 
 (defun netbox--cache-get (key)
-  "Return cached results for KEY, or nil if absent or expired."
-  (when (> netbox-cache-ttl 0)
-    (let ((entry (gethash key netbox--cache)))
-      (when (and entry
-                 (< (- (float-time) (car entry)) netbox-cache-ttl))
+  "Return cached results for KEY, or `netbox--cache-miss' when unavailable."
+  (if (<= netbox-cache-ttl 0)
+      netbox--cache-miss
+    (let ((entry (gethash key netbox--cache netbox--cache-miss)))
+      (if (or (eq entry netbox--cache-miss)
+              (>= (- (float-time) (car entry)) netbox-cache-ttl))
+          (progn
+            (unless (eq entry netbox--cache-miss)
+              (remhash key netbox--cache))
+            netbox--cache-miss)
         (cdr entry)))))
 
 (defun netbox--cache-put (key results)
@@ -598,7 +654,7 @@ immediately with the cached data.  Otherwise fetches from the API and
 populates the cache on success."
   (let* ((key    (netbox--cache-key endpoint params))
          (cached (netbox--cache-get key)))
-    (if cached
+    (if (not (eq cached netbox--cache-miss))
         (progn
           (message "NetBox: serving %d results from cache" (length cached))
           (funcall callback cached nil))
@@ -756,23 +812,14 @@ Returns nil when the URL cannot be parsed."
         (cons (match-string 1 path)
               (string-to-number (match-string 2 path)))))))
 
-(defun netbox--format-value (val)
-  "Format a JSON value VAL as a display string (no side effects).
-For detail buffers use `netbox--insert-value' instead, which renders
-navigable objects as clickable buttons."
-  (cond
-   ((null val)    (propertize "—" 'face 'font-lock-comment-face))
-   ((eq val t)    (propertize "true"  'face 'font-lock-builtin-face))
-   ((stringp val) val)
-   ((numberp val) (number-to-string val))
-   ((listp val)
-    (let ((display (or (cdr (assoc "display" val))
-                       (cdr (assoc "name"    val))
-                       (cdr (assoc "label"   val)))))
-      (if display
-          (propertize display 'face 'font-lock-string-face)
-        (format "%S" val))))
-   (t (format "%S" val))))
+(defun netbox--object-title (obj endpoint id)
+  "Return a non-empty display title for OBJ from ENDPOINT with ID."
+  (let ((display (netbox--alist-str obj "display"))
+        (name (netbox--alist-str obj "name")))
+    (cond
+     ((not (string-empty-p display)) display)
+     ((not (string-empty-p name)) name)
+     (t (format "%s #%s" endpoint id)))))
 
 (defun netbox-show-detail (endpoint id)
   "Display detail view for object at ENDPOINT with ID (async)."
@@ -795,10 +842,18 @@ navigable objects as clickable buttons."
           (if (or (null buf) (not (buffer-live-p buf)))
               nil
             (if err
-                (message "NetBox: error loading detail: %s" err)
-              (let* ((display (or (netbox--alist-str obj "display")
-                                  (netbox--alist-str obj "name")
-                                  (format "%s #%s" endpoint id)))
+                (with-current-buffer buf
+                  (let ((inhibit-read-only t))
+                    (rename-buffer
+                     (format "*NetBox: %s #%s*"
+                             (string-trim-right endpoint "/") id)
+                     t)
+                    (erase-buffer)
+                    (insert (propertize
+                             (format "Unable to load this object: %s\n\nPress `g r' to retry."
+                                     err)
+                             'face 'error))))
+              (let* ((display (netbox--object-title obj endpoint id))
                      (new-name (format "*NetBox: %s*" display)))
                 (with-current-buffer buf
                   (rename-buffer new-name t)
@@ -848,6 +903,15 @@ by the value.  The value is copied as a plain string (no text properties)."
       (kill-new str)
       (message "Copied: %s" str))))
 
+(defvar-local netbox-list--endpoint nil
+  "API endpoint for this list buffer.")
+(defvar-local netbox-list--columns nil
+  "Column spec for this list buffer.")
+(defvar-local netbox-list--search-q nil
+  "Active search query, or nil.")
+(defvar-local netbox-list--title nil
+  "Base display title without filter suffix.")
+
 (defun netbox-list-open-url ()
   "Open the NetBox web UI URL of the object on the current line in browser."
   (interactive)
@@ -886,11 +950,6 @@ by the value.  The value is copied as a plain string (no text properties)."
 
 \\{netbox-list-mode-map}")
 
-(defvar-local netbox-list--endpoint   nil "API endpoint for this list buffer.")
-(defvar-local netbox-list--columns    nil "Column spec for this list buffer.")
-(defvar-local netbox-list--search-q   nil "Active search query, or nil.")
-(defvar-local netbox-list--title      nil "Base display title without filter suffix.")
-
 (defun netbox--auto-size-columns (entries columns)
   "Return COLUMNS with widths expanded to fit the widest value in ENTRIES.
 Each column width is the max of its declared width and the widest rendered
@@ -921,6 +980,16 @@ string in that column across all ENTRIES.  A padding of 2 is added."
                       "NetBox"))
     (force-mode-line-update)))
 
+(defun netbox--list-show-error (message-text)
+  "Replace the current list contents with MESSAGE-TEXT as an error row."
+  (let* ((columns netbox-list--columns)
+         (cells (cons (propertize (concat "Error: " message-text) 'face 'error)
+                      (make-list (max 0 (1- (length columns))) "")))
+         (inhibit-read-only t))
+    (setq tabulated-list-entries (list (list nil (vconcat cells))))
+    (tabulated-list-print t)
+    (message "NetBox: error: %s" message-text)))
+
 (defun netbox-list-populate ()
   "Async fetch data from the API and repopulate the current list buffer."
   (let* ((buf      (current-buffer))
@@ -931,9 +1000,12 @@ string in that column across all ENTRIES.  A padding of 2 is added."
     ;; Show placeholder immediately so the buffer feels responsive
     (let ((inhibit-read-only t))
       (setq tabulated-list-entries
-            (list (list 0 (vconcat
-                           (mapcar (lambda (_) (propertize "Loading…" 'face 'font-lock-comment-face))
-                                   columns)))))
+            (list (list nil
+                        (vconcat
+                         (mapcar
+                          (lambda (_)
+                            (propertize "Loading…" 'face 'font-lock-comment-face))
+                          columns)))))
       (tabulated-list-print t))
     (netbox--run-with-connectivity-check
      buf
@@ -944,7 +1016,7 @@ string in that column across all ENTRIES.  A padding of 2 is added."
           (when (buffer-live-p buf)
             (with-current-buffer buf
               (if err
-                  (message "NetBox: error: %s" err)
+                  (netbox--list-show-error err)
                 (let* ((entries (mapcar (lambda (o)
                                           (netbox--list-make-entry o columns))
                                         objects))
@@ -1443,12 +1515,15 @@ Opens a list buffer filtered by the ?q= API parameter."
   (interactive
    (list (completing-read "Resource: " (mapcar #'car netbox--resource-alist) nil t)
          (read-string "Query: ")))
-  (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
-         (endpoint (symbol-value (car entry)))
-         (columns  (symbol-value (cdr entry))))
-    (with-current-buffer (get-buffer-create (format "*NetBox: %s*" resource))
-      (netbox-list-setup endpoint columns resource query)
-      (netbox--display-buffer (current-buffer)))))
+  (let ((entry (cdr (assoc resource netbox--resource-alist))))
+    (unless entry
+      (user-error "Unknown NetBox resource: %s" resource))
+    (let* ((query (and query (not (string-empty-p query)) query))
+           (endpoint (symbol-value (car entry)))
+           (columns (symbol-value (cdr entry))))
+      (with-current-buffer (get-buffer-create (format "*NetBox: %s*" resource))
+        (netbox-list-setup endpoint columns resource query)
+        (netbox--display-buffer (current-buffer))))))
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -1465,13 +1540,16 @@ Opens a list buffer filtered by the ?q= API parameter."
   "Convert a search result OBJ into a tabulated-list entry.
 OBJ is an alist with an injected \"object_type\" key (the human-readable
 resource name) prepended during the parallel fetch."
-  (let* ((id       (or (cdr (assoc "id" obj)) (sxhash obj)))
+  (let* ((object-id (or (cdr (assoc "id" obj)) (sxhash obj)))
          (obj-type (or (cdr (assoc "object_type" obj)) ""))
          (display  (or (cdr (assoc "display" obj))
                        (cdr (assoc "name" obj)) ""))
          (desc     (or (cdr (assoc "description" obj)) ""))
-         (url      (or (cdr (assoc "url" obj)) "")))
-    (list id (vector obj-type display desc url))))
+         (url      (or (cdr (assoc "url" obj)) ""))
+         (row-id   (if (string-empty-p url)
+                       (cons obj-type object-id)
+                     url)))
+    (list row-id (vector obj-type display desc url))))
 
 (defun netbox--super-search-open-detail ()
   "Open the detail view for the search result on the current line.
@@ -1542,8 +1620,11 @@ Parses the object's API URL to determine the endpoint and ID."
                               "]")
                     "NetBox-Search"))
   (force-mode-line-update)
-  (when netbox-super-search--query
-    (netbox--super-search-populate netbox-super-search--query)))
+  (if netbox-super-search--query
+      (netbox--super-search-populate netbox-super-search--query)
+    (let ((inhibit-read-only t))
+      (setq tabulated-list-entries nil)
+      (tabulated-list-print t))))
 
 (defun netbox-super-search-edit-query ()
   "Edit the current super search query (pre-filled)."
@@ -1591,8 +1672,18 @@ results into a single list."
               (when (and (zerop pending) (buffer-live-p buf))
                 (with-current-buffer buf
                   (let* ((entries (mapcar #'netbox--super-search-make-entry all-results))
-                         (sized (netbox--auto-size-columns entries columns)))
-                    (setq tabulated-list-entries entries
+                         (display-entries
+                          (if (and had-error (null entries))
+                              (list
+                               (list nil
+                                     (vector
+                                      (propertize "Error" 'face 'error)
+                                      "All resource requests failed"
+                                      ""
+                                      "")))
+                            entries))
+                         (sized (netbox--auto-size-columns display-entries columns)))
+                    (setq tabulated-list-entries display-entries
                           tabulated-list-format
                           (vconcat (mapcar (lambda (c) (list (car c) (cadr c) t))
                                            sized)))
@@ -1937,11 +2028,6 @@ Called automatically when `netbox-precache-after-idle' changes."
 ;;;; ──────────────────────────────────────────────────────────
 ;;;; Evil mode integration (optional)
 
-(declare-function evil-set-initial-state      "evil-core"    (mode state))
-(declare-function evil-define-key*            "evil-core"    (&rest args))
-(declare-function evil-make-intercept-map     "evil-core"    (map &optional state))
-(declare-function evil-normalize-keymaps      "evil-core"    (&optional arg))
-
 (defun netbox-evil-setup ()
   "Configure evil keybindings for netbox modes.
 This is called automatically when evil is loaded and
@@ -1954,7 +2040,7 @@ This is called automatically when evil is loaded and
   (evil-set-initial-state 'netbox-detail-mode       'normal)
   (evil-set-initial-state 'netbox-super-search-mode 'normal)
   (evil-set-initial-state 'netbox-config-check-mode 'normal)
-  (evil-define-key 'normal netbox-list-mode-map
+  (netbox--evil-define-key 'normal netbox-list-mode-map
     (kbd "RET") #'netbox-list-open-detail
     (kbd "g r") #'netbox-list-refresh
     (kbd "o")   #'netbox-list-open-url
@@ -1962,7 +2048,7 @@ This is called automatically when evil is loaded and
     (kbd "/")   #'netbox-list-search
     (kbd "F")   #'netbox-list-edit-filter
     (kbd "?")   #'netbox-help)
-  (evil-define-key 'normal netbox-super-search-mode-map
+  (netbox--evil-define-key 'normal netbox-super-search-mode-map
     (kbd "RET") #'netbox--super-search-open-detail
     (kbd "g r") #'netbox-super-search-refresh
     (kbd "o")   #'netbox--super-search-open-browser-url
@@ -1970,7 +2056,7 @@ This is called automatically when evil is loaded and
     (kbd "/")   #'netbox-super-search-requery
     (kbd "F")   #'netbox-super-search-edit-query
     (kbd "?")   #'netbox-help)
-  (evil-define-key 'normal netbox-detail-mode-map
+  (netbox--evil-define-key 'normal netbox-detail-mode-map
     (kbd "g r")       #'netbox-detail-refresh
     (kbd "o")         #'netbox-detail-open-url
     (kbd "q")         #'netbox-quit
@@ -1980,23 +2066,27 @@ This is called automatically when evil is loaded and
     (kbd "<tab>")     #'netbox-detail-next-button
     (kbd "<backtab>") #'netbox-detail-prev-button
     (kbd "S-TAB")     #'netbox-detail-prev-button)
-  (evil-define-key 'normal netbox-config-check-mode-map
+  (netbox--evil-define-key 'normal netbox-config-check-mode-map
     (kbd "q")   #'netbox-quit)
   ;; Remove the regular define-key bindings to avoid conflicts
   ;; since evil-define-key above now handles all states
   (evil-normalize-keymaps))
 
-(with-eval-after-load 'evil
-  (when netbox-evil-integration
+(defun netbox--maybe-setup-evil ()
+  "Configure Evil integration when it is enabled and Evil is available."
+  (when (and netbox-evil-integration
+             (featurep 'evil)
+             (bound-and-true-p evil-mode))
     (netbox-evil-setup)))
 
-;; Fallback: if evil was already loaded when netbox.el was required, and
-;; netbox-evil-integration is set later in init (after `require'), the
-;; with-eval-after-load above already ran and saw nil.  Re-check after init.
-(add-hook 'after-init-hook
-          (lambda ()
-            (when (and netbox-evil-integration (featurep 'evil))
-              (netbox-evil-setup))))
+(add-hook 'evil-mode-hook #'netbox--maybe-setup-evil)
+(netbox--maybe-setup-evil)
+
+(add-variable-watcher
+ 'netbox-evil-integration
+ (lambda (_sym value operation _where)
+   (when (and (eq operation 'set) value (featurep 'evil))
+     (netbox-evil-setup))))
 
 
 ;;;; ──────────────────────────────────────────────────────────

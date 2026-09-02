@@ -169,8 +169,8 @@ in your default web browser. This is useful for:
 - Inspecting or editing objects that require browser-based interaction
 - Switching context between the Emacs CLI and the web interface
 
-In list buffers, `o` works instantly (no API call required). In detail buffers,
-it opens the exact URL stored in the `"url"` field returned by the API.
+In list and detail buffers, `o` works instantly without another API call. The
+web UI URL is derived from the configured endpoint and the selected object ID.
 
 ---
 
@@ -256,7 +256,7 @@ eliminates that delay.
 the resources listed in `netbox-precache-resources` (background, non-blocking).
 
 **Automatic on idle:** set `netbox-precache-after-idle` to a number of idle
-seconds and the pre-cache runs automatically once Emacs has been idle that long:
+seconds and the pre-cache runs whenever Emacs has been idle that long:
 
 ```elisp
 ;; Pre-cache Devices, IP Addresses and VMs after 10 s of idle time
@@ -365,6 +365,17 @@ To **apply the setup manually** without the variable:
 ```elisp
 (with-eval-after-load 'evil
   (netbox-evil-setup))
+```
+
+---
+
+## Development
+
+Run the regression suite in batch mode:
+
+```bash
+emacs -Q --batch -L . -l netbox.el -l test-netbox.el \
+  -f ert-run-tests-batch-and-exit
 ```
 
 ---

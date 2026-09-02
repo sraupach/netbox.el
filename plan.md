@@ -12,13 +12,11 @@ MELPA is a community-maintained package archive for Emacs. To get your package l
 
 ### Step 1 — Push your fixes to GitHub
 
-We already fixed the package header (Author, URL, Copyright), added a LICENSE file, and a .gitignore. You need to push these to your GitHub repo.
-
-**Problem:** locally your branch is called `master`, but on GitHub the default branch is `main`. You need to push to `main`:
+The package header, license, tests, and `.gitignore` are present. Push the
+current `main` branch to GitHub:
 
 ```bash
-cd /Users/sraupach/ai-proj/scratch/evemacs-nb
-git push origin master:main
+git push origin main
 ```
 
 Verify at: https://github.com/sraupach/netbox.el
@@ -72,7 +70,8 @@ cat > recipes/netbox << 'EOF'
 EOF
 ```
 
-The `:files` line is needed because your repo contains test files (`test-netbox.el`, `test-netbox-buttons.el`) that should NOT be included in the distributed package.
+The `:files` line excludes the regression test file (`test-netbox.el`) from
+the distributed package.
 
 ---
 
