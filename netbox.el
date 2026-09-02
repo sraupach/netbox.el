@@ -445,14 +445,19 @@ if `netbox-pre-fetch-check' is nil, ON-OK is called immediately."
       (error
        (funcall on-err (error-message-string err))))))
 
-(defun netbox--run-with-connectivity-check (buf action)
+(defun netbox--run-with-connectivity-check (buf action &optional current-p)
   "Verify NetBox is reachable, then call ACTION (a zero-argument function).
 If the check fails, show an error inside BUF instead of running ACTION.
-Calls ACTION directly when `netbox-pre-fetch-check' is nil."
+Calls ACTION directly when `netbox-pre-fetch-check' is nil.
+When CURRENT-P is non-nil, call ACTION or display an error only while that
+zero-argument predicate returns non-nil."
   (netbox--check-connectivity-async
-   action
+   (lambda ()
+     (when (or (null current-p) (funcall current-p))
+       (funcall action)))
    (lambda (msg)
-     (when (buffer-live-p buf)
+     (when (and (buffer-live-p buf)
+                (or (null current-p) (funcall current-p)))
        (with-current-buffer buf
          (let ((inhibit-read-only t))
            (erase-buffer)
@@ -607,7 +612,7 @@ Calls (CALLBACK RESULT nil) on success or (CALLBACK nil ERROR) on failure."
 
 (defvar netbox--cache (make-hash-table :test #'equal)
   "Cache for list API responses.
-Keys are (ENDPOINT . PARAMS-STRING) cons cells.
+Keys contain the NetBox URL, endpoint, and query parameters.
 Values are (TIMESTAMP . RESULTS) cons cells.")
 
 (defconst netbox--cache-miss (make-symbol "netbox-cache-miss")
@@ -615,7 +620,8 @@ Values are (TIMESTAMP . RESULTS) cons cells.")
 
 (defun netbox--cache-key (endpoint params)
   "Return the cache key for ENDPOINT and PARAMS alist."
-  (cons endpoint
+  (list (string-trim-right netbox-url "/")
+        endpoint
         (mapconcat (lambda (p) (concat (car p) "=" (cdr p))) params "&")))
 
 (defun netbox--cache-get (key)
@@ -745,6 +751,12 @@ Status columns (header \"Status\") are propertized with a semantic face."
 (defvar-local netbox-detail--endpoint nil "Endpoint used to load this object.")
 (defvar-local netbox-detail--id       nil "ID of the displayed object.")
 (defvar-local netbox-detail--obj      nil "Full alist of the displayed object.")
+(put 'netbox-detail--endpoint 'permanent-local t)
+(put 'netbox-detail--id 'permanent-local t)
+
+(defun netbox--detail-loading-buffer-name (endpoint id)
+  "Return a unique loading buffer name for ENDPOINT and ID."
+  (format "*NetBox: loading %s #%s…*" (string-trim-right endpoint "/") id))
 
 (defun netbox--render-detail (obj)
   "Insert a human-readable representation of alist OBJ into current buffer."
@@ -823,7 +835,7 @@ Returns nil when the URL cannot be parsed."
 
 (defun netbox-show-detail (endpoint id)
   "Display detail view for object at ENDPOINT with ID (async)."
-  (let* ((buf-name (format "*NetBox: loading #%s…*" id))
+  (let* ((buf-name (netbox--detail-loading-buffer-name endpoint id))
          (buf (get-buffer-create buf-name)))
     (with-current-buffer buf
       (netbox-detail-mode)
@@ -838,9 +850,14 @@ Returns nil when the URL cannot be parsed."
      (lambda ()
        (netbox-api-get-async
         endpoint id
-        (lambda (obj err)
-          (if (or (null buf) (not (buffer-live-p buf)))
-              nil
+         (lambda (obj err)
+           (if (or (null buf)
+                   (not (buffer-live-p buf))
+                   (not (equal endpoint
+                               (buffer-local-value 'netbox-detail--endpoint buf)))
+                   (not (equal id
+                               (buffer-local-value 'netbox-detail--id buf))))
+               nil
             (if err
                 (with-current-buffer buf
                   (let ((inhibit-read-only t))
@@ -858,7 +875,13 @@ Returns nil when the URL cannot be parsed."
                 (with-current-buffer buf
                   (rename-buffer new-name t)
                   (setq netbox-detail--obj obj)
-                  (netbox--render-detail obj)))))))))))
+                   (netbox--render-detail obj))))))))
+     (lambda ()
+       (and (buffer-live-p buf)
+            (equal endpoint
+                   (buffer-local-value 'netbox-detail--endpoint buf))
+            (equal id
+                   (buffer-local-value 'netbox-detail--id buf)))))))
 
 (defun netbox--api-path-to-ui-path (api-path)
   "Convert API-PATH to the corresponding NetBox web UI path.
@@ -911,6 +934,9 @@ by the value.  The value is copied as a plain string (no text properties)."
   "Active search query, or nil.")
 (defvar-local netbox-list--title nil
   "Base display title without filter suffix.")
+(defvar-local netbox-list--request-generation 0
+  "Generation number of the latest list request in this buffer.")
+(put 'netbox-list--request-generation 'permanent-local t)
 
 (defun netbox-list-open-url ()
   "Open the NetBox web UI URL of the object on the current line in browser."
@@ -993,6 +1019,7 @@ string in that column across all ENTRIES.  A padding of 2 is added."
 (defun netbox-list-populate ()
   "Async fetch data from the API and repopulate the current list buffer."
   (let* ((buf      (current-buffer))
+         (generation (cl-incf netbox-list--request-generation))
          (endpoint netbox-list--endpoint)
          (columns  netbox-list--columns)
          (params   (when netbox-list--search-q
@@ -1013,7 +1040,9 @@ string in that column across all ENTRIES.  A padding of 2 is added."
        (netbox-api-list-async-cached
         endpoint params
         (lambda (objects err)
-          (when (buffer-live-p buf)
+           (when (and (buffer-live-p buf)
+                      (= generation
+                         (buffer-local-value 'netbox-list--request-generation buf)))
             (with-current-buffer buf
               (if err
                   (netbox--list-show-error err)
@@ -1027,8 +1056,12 @@ string in that column across all ENTRIES.  A padding of 2 is added."
                         (vconcat (mapcar (lambda (c) (list (car c) (cadr c) t))
                                          sized-columns)))
                   (let ((inhibit-read-only t))
-                    (tabulated-list-init-header)
-                    (tabulated-list-print))))))))))))
+                     (tabulated-list-init-header)
+                     (tabulated-list-print)))))))))
+     (lambda ()
+       (and (buffer-live-p buf)
+            (= generation
+               (buffer-local-value 'netbox-list--request-generation buf)))))))
 
 (defun netbox-list-setup (endpoint columns title &optional search-q)
   "Set up current buffer as a netbox list for ENDPOINT.
@@ -1585,6 +1618,9 @@ Parses the object's API URL to determine the endpoint and ID."
 \\{netbox-super-search-mode-map}")
 
 (defvar-local netbox-super-search--query nil "Active super search query.")
+(defvar-local netbox-super-search--request-generation 0
+  "Generation number of the latest super-search request in this buffer.")
+(put 'netbox-super-search--request-generation 'permanent-local t)
 
 (defun netbox--super-search-open-browser-url ()
   "Open the NetBox web UI URL for the result on the current line."
@@ -1613,6 +1649,8 @@ Parses the object's API URL to determine the endpoint and ID."
   "Run a new super search QUERY, replacing the current results."
   (interactive "sSuper search: ")
   (setq netbox-super-search--query (if (string-empty-p query) nil query))
+  (unless netbox-super-search--query
+    (cl-incf netbox-super-search--request-generation))
   (setq mode-name (if netbox-super-search--query
                       (concat "NetBox-Search["
                               (propertize netbox-super-search--query
@@ -1638,6 +1676,7 @@ Parses the object's API URL to determine the endpoint and ID."
 Queries each known resource endpoint with ?q= in parallel and merges
 results into a single list."
   (let ((buf (current-buffer))
+        (generation (cl-incf netbox-super-search--request-generation))
         (columns netbox-columns-super-search)
         (endpoints (mapcar (lambda (entry)
                              (cons (car entry)
@@ -1669,7 +1708,11 @@ results into a single list."
                   (dolist (obj results)
                     (push (cons (cons "object_type" type-name) obj) all-results))))
               (cl-decf pending)
-              (when (and (zerop pending) (buffer-live-p buf))
+              (when (and (zerop pending)
+                         (buffer-live-p buf)
+                         (= generation
+                            (buffer-local-value
+                             'netbox-super-search--request-generation buf)))
                 (with-current-buffer buf
                   (let* ((entries (mapcar #'netbox--super-search-make-entry all-results))
                          (display-entries
@@ -1691,8 +1734,15 @@ results into a single list."
                       (tabulated-list-init-header)
                       (tabulated-list-print))
                     (message "NetBox: %d results for \"%s\"%s"
-                             (length entries) query
-                             (if had-error " (some endpoints failed)" "")))))))))))));;;###autoload
+                              (length entries) query
+                              (if had-error " (some endpoints failed)" ""))))))))))
+     (lambda ()
+       (and (buffer-live-p buf)
+            (= generation
+               (buffer-local-value
+                'netbox-super-search--request-generation buf)))))))
+
+;;;###autoload
 (defun netbox-super-search (query)
   "Search across ALL NetBox resource types for QUERY.
 Queries every known resource endpoint with ?q= in parallel and merges
@@ -1980,6 +2030,7 @@ See also `netbox-precache' to warm the cache ahead of time."
 (defvar netbox--precache-idle-timer nil
   "Timer used for idle-triggered pre-caching, or nil if not scheduled.")
 
+;;;###autoload
 (defun netbox-precache ()
   "Pre-fetch `netbox-precache-resources' into the cache in the background.
 Each resource is fetched asynchronously; Emacs remains fully responsive.
