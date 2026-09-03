@@ -667,6 +667,9 @@ Calls (CALLBACK RESULT nil) on success or (CALLBACK nil ERROR) on failure."
 Keys contain the NetBox URL, endpoint, and query parameters.
 Values are (TIMESTAMP . RESULTS) cons cells.")
 
+(defvar netbox--in-flight-requests (make-hash-table :test #'equal)
+  "Callbacks waiting for an active cached list request, keyed like the cache.")
+
 (defconst netbox--cache-miss (make-symbol "netbox-cache-miss")
   "Sentinel returned when no live cache entry exists.")
 
@@ -716,12 +719,20 @@ populates the cache on success."
         (progn
           (message "NetBox: serving %d results from cache" (length cached))
           (funcall callback cached nil))
-      (netbox-api-list-async
-       endpoint params
-       (lambda (results err)
-         (unless err
-           (netbox--cache-put key results))
-         (funcall callback results err))))))
+      (let ((waiting (gethash key netbox--in-flight-requests)))
+        (if waiting
+            (puthash key (cons callback waiting) netbox--in-flight-requests)
+          (puthash key (list callback) netbox--in-flight-requests)
+          (netbox-api-list-async
+           endpoint params
+           (lambda (results err)
+             (unless err
+               (netbox--cache-put key results))
+             (let ((callbacks (nreverse
+                               (gethash key netbox--in-flight-requests))))
+               (remhash key netbox--in-flight-requests)
+               (dolist (waiting-callback callbacks)
+                 (funcall waiting-callback results err))))))))))
 
 (defun netbox--alist-str (alist key)
   "Return string value for KEY in ALIST, or empty string if absent/nil."

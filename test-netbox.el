@@ -233,6 +233,29 @@
     (should-not callback-result)
     (should-not callback-error)))
 
+(ert-deftest netbox-test-identical-cache-misses-share-one-request ()
+  (let ((netbox--cache (make-hash-table :test #'equal))
+        (netbox--in-flight-requests (make-hash-table :test #'equal))
+        (netbox-cache-ttl 300)
+        fetch-callback
+        (fetch-count 0)
+        results)
+    (cl-letf (((symbol-function 'netbox-api-list-async)
+               (lambda (_endpoint _params callback)
+                 (cl-incf fetch-count)
+                 (setq fetch-callback callback))))
+      (netbox-api-list-async-cached
+       "/api/test/" '(("q" . "same"))
+       (lambda (objects err) (push (list objects err) results)))
+      (netbox-api-list-async-cached
+       "/api/test/" '(("q" . "same"))
+       (lambda (objects err) (push (list objects err) results)))
+      (should (= fetch-count 1))
+      (funcall fetch-callback '(("id" . 1)) nil))
+    (should (= (length results) 2))
+    (should-not (gethash (netbox--cache-key "/api/test/" '(("q" . "same")))
+                         netbox--in-flight-requests))))
+
 (ert-deftest netbox-test-cache-keys-include-netbox-instance ()
   (let ((netbox-url "https://first.example"))
     (should-not
