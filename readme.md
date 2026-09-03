@@ -372,17 +372,6 @@ To **apply the setup manually** without the variable:
 
 ---
 
-## Development
-
-Run the regression suite in batch mode:
-
-```bash
-emacs -Q --batch -L . -l netbox.el -l test-netbox.el \
-  -f ert-run-tests-batch-and-exit
-```
-
----
-
 ## License
 
 GPL-3.0-or-later

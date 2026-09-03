@@ -1,2 +1,4 @@
 /.agent-shell/
 *.elc
+/test-netbox.el
+/plan.md
