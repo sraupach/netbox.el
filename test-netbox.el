@@ -128,6 +128,58 @@
     (should (= (length result) 1))
     (should (= calls 1))))
 
+(ert-deftest netbox-test-async-retrieval-times-out-once ()
+  (let (timer-function
+        request-buffer
+        callback-status
+        (callback-count 0))
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_seconds _repeat function &rest _args)
+                 (setq timer-function function)
+                 'fake-timer))
+              ((symbol-function 'timerp) (lambda (_timer) t))
+              ((symbol-function 'cancel-timer) #'ignore)
+              ((symbol-function 'url-retrieve)
+               (lambda (_url _callback &rest _args)
+                 (setq request-buffer (generate-new-buffer " *netbox timeout*")))))
+      (netbox--url-retrieve-with-timeout
+       "https://netbox.example/api/"
+       (lambda (status)
+         (cl-incf callback-count)
+         (setq callback-status status))
+       3)
+      (funcall timer-function)
+      (funcall timer-function))
+    (should (= callback-count 1))
+    (should-not (buffer-live-p request-buffer))
+    (should (equal (netbox--status-error-message callback-status)
+                   "Request timed out after 3 seconds"))))
+
+(ert-deftest netbox-test-async-retrieval-cancels-timeout-on-success ()
+  (let (timer-function
+        retrieval-callback
+        (cancelled nil)
+        (callback-count 0))
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_seconds _repeat function &rest _args)
+                 (setq timer-function function)
+                 'fake-timer))
+              ((symbol-function 'timerp) (lambda (_timer) t))
+              ((symbol-function 'cancel-timer)
+               (lambda (_timer) (setq cancelled t)))
+              ((symbol-function 'url-retrieve)
+               (lambda (_url callback &rest _args)
+                 (setq retrieval-callback callback)
+                 (current-buffer))))
+      (netbox--url-retrieve-with-timeout
+       "https://netbox.example/api/"
+       (lambda (_status) (cl-incf callback-count))
+       3)
+      (funcall retrieval-callback nil)
+      (funcall timer-function))
+    (should cancelled)
+    (should (= callback-count 1))))
+
 (ert-deftest netbox-test-empty-results-are-cacheable ()
   (let ((netbox--cache (make-hash-table :test #'equal))
         (netbox-cache-ttl 300)

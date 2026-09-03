@@ -393,8 +393,49 @@ or an http+https proxy spec for any other string."
           (switch-to-buffer buf))
       (switch-to-buffer-other-window buf)
       (setq netbox--managed-window (selected-window))
-      (with-current-buffer buf
-        (setq netbox--is-root-buffer t)))))
+       (with-current-buffer buf
+         (setq netbox--is-root-buffer t)))))
+
+(defun netbox--url-retrieve-with-timeout (url callback timeout)
+  "Retrieve URL asynchronously and call CALLBACK with status.
+Abort the request and report an error when it exceeds TIMEOUT seconds.
+The caller should dynamically bind the usual `url-request-*' variables."
+  (let (request-buffer timer done)
+    (setq timer
+          (run-at-time
+           timeout nil
+           (lambda ()
+             (unless done
+               (setq done t)
+               (when (buffer-live-p request-buffer)
+                 (kill-buffer request-buffer))
+               (funcall callback
+                        `(:error (error timeout
+                                        ,(format "Request timed out after %s seconds"
+                                                 timeout))))))))
+    (condition-case err
+        (setq request-buffer
+              (url-retrieve
+               url
+               (lambda (status)
+                 (unless done
+                   (setq done t)
+                   (when (timerp timer)
+                     (cancel-timer timer))
+                   (funcall callback status)))
+               nil t t))
+      (error
+       (when (timerp timer)
+         (cancel-timer timer))
+       (signal (car err) (cdr err))))))
+
+(defun netbox--status-error-message (status)
+  "Return a readable error message from asynchronous URL STATUS."
+  (let ((err (plist-get status :error)))
+    (when err
+      (if (and (consp err) (eq (car err) 'error))
+          (mapconcat (lambda (part) (format "%s" part)) (cddr err) ": ")
+        (format "%s" err)))))
 
 (defun netbox-quit ()
   "Quit the current NetBox buffer.
@@ -431,17 +472,17 @@ if `netbox-pre-fetch-check' is nil, ON-OK is called immediately."
                (network-security-level (if netbox-tls-verify 'medium 'low))
                (url-proxy-services (or (netbox--proxy-services)
                                        url-proxy-services)))
-          (url-retrieve ping-url
-                        (lambda (status)
-                          (let ((err-status (plist-get status :error))
-                                (ping-buf   (current-buffer)))
-                            (kill-buffer ping-buf)
-                            (if err-status
-                                (funcall on-err
-                                         (format "%s" (or (cadr err-status)
-                                                          err-status)))
-                              (funcall on-ok))))
-                        nil t netbox-connectivity-timeout))
+          (netbox--url-retrieve-with-timeout
+           ping-url
+           (lambda (status)
+             (let ((error-message (netbox--status-error-message status))
+                   (ping-buf (current-buffer)))
+               (when (buffer-live-p ping-buf)
+                 (kill-buffer ping-buf))
+               (if error-message
+                   (funcall on-err error-message)
+                 (funcall on-ok))))
+           netbox-connectivity-timeout))
       (error
        (funcall on-err (error-message-string err))))))
 
@@ -543,24 +584,24 @@ ERROR-STRING is nil on success, a description string on failure."
                (network-security-level (if netbox-tls-verify 'medium 'low))
                (url-proxy-services (or (netbox--proxy-services)
                                        url-proxy-services)))
-          (url-retrieve url
-                        (lambda (status)
-                          (let ((err-status (plist-get status :error)))
-                            (if err-status
-                                (progn
-                                  (kill-buffer (current-buffer))
-                                  (funcall callback nil
-                                           (format "%s" (or (cadr err-status)
-                                                            err-status))))
-                              (condition-case parse-err
-                                  (let ((result (netbox--parse-response)))
-                                    (kill-buffer (current-buffer))
-                                    (funcall callback result nil))
-                                (error
-                                 (kill-buffer (current-buffer))
-                                 (funcall callback nil
-                                          (error-message-string parse-err)))))))
-                        nil t netbox-timeout)))
+          (netbox--url-retrieve-with-timeout
+           url
+           (lambda (status)
+             (let ((error-message (netbox--status-error-message status)))
+               (if error-message
+                   (progn
+                     (when (buffer-live-p (current-buffer))
+                       (kill-buffer (current-buffer)))
+                     (funcall callback nil error-message))
+                 (condition-case parse-err
+                     (let ((result (netbox--parse-response)))
+                       (kill-buffer (current-buffer))
+                       (funcall callback result nil))
+                   (error
+                    (kill-buffer (current-buffer))
+                    (funcall callback nil
+                             (error-message-string parse-err)))))))
+           netbox-timeout)))
     (error
      (funcall callback nil (error-message-string err)))))
 
