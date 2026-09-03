@@ -126,18 +126,24 @@
 (ert-deftest netbox-test-async-pagination-preserves-order-across-many-pages ()
   (let ((next-id 0)
         (page-count 100)
-        result)
+        result
+        requests)
     (cl-letf (((symbol-function 'netbox-api-request-async)
                (lambda (_endpoint _params callback)
-                 (let ((id (cl-incf next-id)))
-                   (funcall callback
-                            `(("count" . ,page-count)
-                              ("next" . ,(and (< id page-count) "next"))
-                              ("results" . ((("id" . ,id)))))
-                            nil)))))
+                 (push callback requests))))
       (netbox-api-list-async
        "/api/test/" nil
-       (lambda (objects _err) (setq result objects))))
+       (lambda (objects _err) (setq result objects)))
+      ;; Drain callbacks iteratively, matching how real asynchronous URL
+      ;; callbacks return to the event loop between pages.
+      (while requests
+        (let ((callback (pop requests))
+              (id (cl-incf next-id)))
+          (funcall callback
+                   `(("count" . ,page-count)
+                     ("next" . ,(and (< id page-count) "next"))
+                     ("results" . ((("id" . ,id)))))
+                   nil))))
     (should (equal (mapcar (lambda (obj) (cdr (assoc "id" obj))) result)
                    (number-sequence 1 page-count)))))
 
