@@ -48,7 +48,20 @@
                  (pop responses))))
       (should (equal (mapcar (lambda (obj) (cdr (assoc "id" obj)))
                              (netbox-api-list "/api/test/"))
-                     '(1 2))))))
+                      '(1 2))))))
+
+(ert-deftest netbox-test-sync-pagination-preserves-order-across-many-pages ()
+  (let ((next-id 0)
+        (page-count 100))
+    (cl-letf (((symbol-function 'netbox-api-request)
+               (lambda (_endpoint _params)
+                 (let ((id (cl-incf next-id)))
+                   `(("count" . ,page-count)
+                     ("next" . ,(and (< id page-count) "next"))
+                     ("results" . ((("id" . ,id)))))))))
+      (should (equal (mapcar (lambda (obj) (cdr (assoc "id" obj)))
+                             (netbox-api-list "/api/test/"))
+                     (number-sequence 1 page-count))))))
 
 (ert-deftest netbox-test-sync-pagination-stops-at-reported-count ()
   (let ((calls 0))
@@ -105,7 +118,25 @@
                error-text err))))
     (should-not error-text)
     (should (equal (mapcar (lambda (obj) (cdr (assoc "id" obj))) result)
-                   '(1 2)))))
+                    '(1 2)))))
+
+(ert-deftest netbox-test-async-pagination-preserves-order-across-many-pages ()
+  (let ((next-id 0)
+        (page-count 100)
+        result)
+    (cl-letf (((symbol-function 'netbox-api-request-async)
+               (lambda (_endpoint _params callback)
+                 (let ((id (cl-incf next-id)))
+                   (funcall callback
+                            `(("count" . ,page-count)
+                              ("next" . ,(and (< id page-count) "next"))
+                              ("results" . ((("id" . ,id)))))
+                            nil)))))
+      (netbox-api-list-async
+       "/api/test/" nil
+       (lambda (objects _err) (setq result objects))))
+    (should (equal (mapcar (lambda (obj) (cdr (assoc "id" obj))) result)
+                   (number-sequence 1 page-count)))))
 
 (ert-deftest netbox-test-async-pagination-stops-at-reported-count ()
   (let ((calls 0)

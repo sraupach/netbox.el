@@ -535,7 +535,7 @@ PARAMS is an optional alist of extra query parameters.
 Returns a flat list of result alists."
   (let* ((limit  (number-to-string netbox-default-page-size))
          (offset 0)
-         (all-results '())
+         (pages '())
          (done nil))
     (while (not done)
       (let* ((page-params (append params
@@ -546,7 +546,7 @@ Returns a flat list of result alists."
              (results  (or (cdr (assoc "results" response)) '()))
              (has-next (cdr (assoc "next" response)))
              (next-offset (+ offset (length results))))
-        (setq all-results (append all-results results))
+        (push results pages)
         (cond
          ((null has-next)
           (setq done t))
@@ -556,7 +556,7 @@ Returns a flat list of result alists."
           (setq done t))
          (t
           (setq offset next-offset)))))
-    all-results))
+    (apply #'append (nreverse pages))))
 
 (defun netbox-api-get (endpoint id)
   "Fetch a single object from ENDPOINT by integer or string ID."
@@ -605,9 +605,9 @@ ERROR-STRING is nil on success, a description string on failure."
     (error
      (funcall callback nil (error-message-string err)))))
 
-(defun netbox-api-list-async (endpoint params callback &optional acc offset)
+(defun netbox-api-list-async (endpoint params callback &optional pages offset)
   "Async fetch of ALL results from paginated ENDPOINT using PARAMS.
-Recursively fetches pages, accumulating into ACC starting at OFFSET.
+Recursively fetches pages, accumulating page lists in PAGES starting at OFFSET.
 Calls (CALLBACK ALL-RESULTS nil) on success or (CALLBACK nil ERROR) on failure.
 Shows incremental progress in the echo area."
   (let* ((offset    (or offset 0))
@@ -623,22 +623,22 @@ Shows incremental progress in the echo area."
          (let* ((results (or (cdr (assoc "results" response)) '()))
                 (count   (or (cdr (assoc "count"   response)) 0))
                 (has-next (cdr (assoc "next" response)))
-                (acc     (append acc results))
-                (loaded  (length acc)))
+                 (pages   (cons results pages))
+                 (loaded  (+ offset (length results))))
            (message "NetBox: loading… (%d/%d)" loaded count)
            (cond
             ((null has-next)
              (message "NetBox: loaded %d" loaded)
-             (funcall callback acc nil))
+              (funcall callback (apply #'append (nreverse pages)) nil))
             ((null results)
              (funcall callback nil
                       "Pagination returned no results but advertised a next page"))
             ((and (numberp count) (>= loaded count))
              (message "NetBox: loaded %d" loaded)
-             (funcall callback acc nil))
+              (funcall callback (apply #'append (nreverse pages)) nil))
             (t
              (netbox-api-list-async
-              endpoint params callback acc (+ offset (length results)))))))))))
+               endpoint params callback pages loaded)))))))))
 
 (defun netbox-api-get-async (endpoint id callback)
   "Async fetch of a single object from ENDPOINT by ID.
