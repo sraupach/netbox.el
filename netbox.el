@@ -222,14 +222,15 @@ Quitting this buffer also deletes `netbox--managed-window'.
 Declared permanent-local so it survives major-mode re-initialisation.")
 (put 'netbox--is-root-buffer 'permanent-local t)
 
-(defcustom netbox-pre-fetch-check t
-  "When non-nil (default), verify NetBox is reachable before each API fetch.
-Failed checks are reported immediately rather than waiting for `netbox-timeout'."
+(defcustom netbox-pre-fetch-check nil
+  "When non-nil, verify NetBox is reachable before each API fetch.
+This adds an extra network request before each operation.  Enable it when a
+short preflight failure is preferable to waiting for `netbox-timeout'."
   :type 'boolean
   :group 'netbox)
 
 (defcustom netbox-connectivity-timeout 5
-  "Seconds to wait for the pre-fetch connectivity check.
+  "Seconds to wait for the optional pre-fetch connectivity check.
 Kept deliberately short so unreachable hosts are reported quickly."
   :type 'integer
   :group 'netbox)

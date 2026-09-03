@@ -23,6 +23,9 @@
                  netbox--endpoint-specs)
      ,@body))
 
+(ert-deftest netbox-test-connectivity-preflight-defaults-off ()
+  (should-not (default-value 'netbox-pre-fetch-check)))
+
 (ert-deftest netbox-test-sync-pagination-rejects-empty-next-page ()
   (let ((calls 0))
     (cl-letf (((symbol-function 'netbox-api-request)

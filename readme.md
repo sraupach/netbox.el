@@ -26,7 +26,7 @@
 - ⚡ **Response caching** — configurable TTL (default 5 min) eliminates
   redundant API round-trips; `g r` always fetches live data
 - 🔒 **Secure token storage** via `auth-source` / `~/.authinfo.gpg`
-- 🛡️ **Pre-fetch connectivity check** for fast, clear error messages
+- 🛡️ **Optional pre-fetch connectivity check** for fast, clear error messages
 - 🌍 **Per-request proxy support** — never touches global Emacs proxy state
 - 😈 **Evil mode integration** — opt-in normal-state bindings via `netbox-evil-integration`
 
@@ -189,7 +189,7 @@ All settings live under the `netbox` customization group
 | `netbox-timeout`              | `30`     | Request timeout in seconds for data fetches                    |
 | `netbox-proxy`                | `nil`    | Proxy URL, `"direct"`, or `nil` to inherit global proxy        |
 | `netbox-reuse-window`         | `t`      | `t` = current window · `nil` = new window                      |
-| `netbox-pre-fetch-check`      | `t`      | Ping NetBox before each fetch for fast error reporting         |
+| `netbox-pre-fetch-check`      | `nil`    | Optionally ping NetBox before each fetch for fast error reporting |
 | `netbox-connectivity-timeout` | `5`      | Timeout in seconds for the pre-fetch ping                      |
 | `netbox-cache-ttl`            | `300`    | Seconds to cache list responses · `0` disables caching         |
 | `netbox-precache-resources`   | `'("Devices" "IP Addresses" "Virtual Machines")` | Resources to pre-fetch for `netbox-jump` |
@@ -275,15 +275,16 @@ seconds and the pre-cache runs whenever Emacs has been idle that long:
 
 ### Pre-fetch connectivity check
 
-When `netbox-pre-fetch-check` is `t` (default), a quick ping to
+When `netbox-pre-fetch-check` is `t`, a quick ping to
 `<netbox-url>/api/` is made before every data fetch using
 `netbox-connectivity-timeout` as the deadline.  Unreachable instances
 are reported immediately with a `g r` retry hint rather than silently
-hanging for the full `netbox-timeout`.
+hanging for the full `netbox-timeout`.  It defaults to `nil` because enabling
+it adds an extra network round trip to every operation.
 
 ```elisp
-;; Disable on fast, reliable networks to save one round-trip
-(setq netbox-pre-fetch-check nil)
+;; Enable on unreliable networks for a short preflight timeout
+(setq netbox-pre-fetch-check t)
 ```
 
 ### Proxy configuration
