@@ -194,6 +194,8 @@ All settings live under the `netbox` customization group
 | `netbox-cache-ttl`            | `300`    | Seconds to cache list responses · `0` disables caching         |
 | `netbox-precache-resources`   | `'("Devices" "IP Addresses" "Virtual Machines")` | Resources to pre-fetch for `netbox-jump` |
 | `netbox-precache-after-idle`  | `nil`    | Idle seconds before auto-pre-caching; `nil` disables           |
+| `netbox-super-search-concurrency` | `4` | Maximum simultaneous super-search requests                     |
+| `netbox-super-search-limit`   | `50`     | Maximum results requested from each resource                   |
 | `netbox-evil-integration`     | `nil`    | Set to `t` to auto-configure evil keybindings when evil is loaded |
 
 ### Example configuration

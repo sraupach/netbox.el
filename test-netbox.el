@@ -317,6 +317,36 @@
          (site-id (car (netbox--super-search-make-entry site))))
     (should-not (equal device-id site-id))))
 
+(ert-deftest netbox-test-super-search-limits-concurrent-requests ()
+  (let ((netbox--resource-alist
+         '(("One" . (netbox-endpoint-dcim-sites . columns-one))
+           ("Two" . (netbox-endpoint-dcim-racks . columns-two))
+           ("Three" . (netbox-endpoint-dcim-devices . columns-three))))
+        (netbox-endpoint-dcim-sites "/one/")
+        (netbox-endpoint-dcim-racks "/two/")
+        (netbox-endpoint-dcim-devices "/three/")
+        (netbox-super-search-concurrency 2)
+        (netbox-super-search-limit 7)
+        callbacks
+        request-params)
+    (with-temp-buffer
+      (netbox-super-search-mode)
+      (setq tabulated-list-format
+            [("Type" 18 t) ("Name" 30 t) ("Description" 40 t) ("URL" 45 t)])
+      (tabulated-list-init-header)
+      (cl-letf (((symbol-function 'netbox--run-with-connectivity-check)
+                 (lambda (_buffer action &optional _current-p) (funcall action)))
+                ((symbol-function 'netbox-api-request-async)
+                 (lambda (_endpoint params callback)
+                   (push params request-params)
+                   (push callback callbacks))))
+        (netbox--super-search-populate "needle")
+        (should (= (length callbacks) 2))
+        (should (equal (cdr (assoc "limit" (car request-params))) "7"))
+        (funcall (pop callbacks) '(("results" . nil)) nil)
+        (should (= (length request-params) 3))
+        (should (= (length callbacks) 2))))))
+
 (ert-deftest netbox-test-clearing-super-search-removes-old-results ()
   (with-temp-buffer
     (netbox-super-search-mode)

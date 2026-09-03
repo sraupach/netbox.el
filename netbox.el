@@ -290,6 +290,16 @@ has been idle for that many seconds.  nil disables automatic pre-caching."
   :type '(choice (const :tag "Disabled" nil) integer)
   :group 'netbox)
 
+(defcustom netbox-super-search-concurrency 4
+  "Maximum number of simultaneous requests made by `netbox-super-search'."
+  :type 'integer
+  :group 'netbox)
+
+(defcustom netbox-super-search-limit 50
+  "Maximum results requested from each resource by `netbox-super-search'."
+  :type 'integer
+  :group 'netbox)
+
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -1737,19 +1747,8 @@ results into a single list."
      buf
      (lambda ()
        (setq pending (length endpoints))
-       (dolist (ep-entry endpoints)
-         (let ((type-name (car ep-entry))
-               (endpoint  (cdr ep-entry)))
-           (netbox-api-request-async
-            endpoint
-            `(("q" . ,query) ("limit" . "50") ("brief" . "1"))
-            (lambda (response err)
-              (if err
-                  (setq had-error t)
-                (let ((results (or (cdr (assoc "results" response)) '())))
-                  (dolist (obj results)
-                    (push (cons (cons "object_type" type-name) obj) all-results))))
-              (cl-decf pending)
+       (cl-labels
+           ((finish ()
               (when (and (zerop pending)
                          (buffer-live-p buf)
                          (= generation
@@ -1759,13 +1758,9 @@ results into a single list."
                   (let* ((entries (mapcar #'netbox--super-search-make-entry all-results))
                          (display-entries
                           (if (and had-error (null entries))
-                              (list
-                               (list nil
-                                     (vector
-                                      (propertize "Error" 'face 'error)
-                                      "All resource requests failed"
-                                      ""
-                                      "")))
+                              (list (list nil (vector
+                                               (propertize "Error" 'face 'error)
+                                               "All resource requests failed" "" "")))
                             entries))
                          (sized (netbox--auto-size-columns display-entries columns)))
                     (setq tabulated-list-entries display-entries
@@ -1776,8 +1771,29 @@ results into a single list."
                       (tabulated-list-init-header)
                       (tabulated-list-print))
                     (message "NetBox: %d results for \"%s\"%s"
-                              (length entries) query
-                              (if had-error " (some endpoints failed)" ""))))))))))
+                             (length entries) query
+                             (if had-error " (some endpoints failed)" ""))))))
+            (start-next ()
+              (when endpoints
+                (let* ((ep-entry (pop endpoints))
+                       (type-name (car ep-entry))
+                       (endpoint (cdr ep-entry)))
+                  (netbox-api-request-async
+                   endpoint
+                   `(("q" . ,query)
+                     ("limit" . ,(number-to-string netbox-super-search-limit))
+                     ("brief" . "1"))
+                   (lambda (response err)
+                     (if err
+                         (setq had-error t)
+                       (dolist (obj (or (cdr (assoc "results" response)) '()))
+                         (push (cons (cons "object_type" type-name) obj) all-results)))
+                     (cl-decf pending)
+                     (start-next)
+                     (finish)))))))
+         (dotimes (_ (min (max 1 netbox-super-search-concurrency)
+                          (length endpoints)))
+           (start-next))))
      (lambda ()
        (and (buffer-live-p buf)
             (= generation
