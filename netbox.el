@@ -2045,7 +2045,8 @@ of the selected object.  Called from within an async fetch callback."
   "Jump directly to a NetBox object by name using `completing-read'.
 Prompts for a RESOURCE type (if not supplied), fetches all objects of that
 type asynchronously, then opens a `completing-read' prompt.  The cache is
-used on repeat calls so the prompt appears instantly.
+used on repeat calls so the prompt appears instantly.  A cached result also
+skips the optional connectivity check because no API request is needed.
 
 Works with any completion framework (Vertico, Consult, Ivy, default).
 See also `netbox-precache' to warm the cache ahead of time."
@@ -2060,19 +2061,25 @@ See also `netbox-precache' to warm the cache ahead of time."
          (columns  (and entry (symbol-value (cdr entry)))))
     (unless entry
       (user-error "Unknown NetBox resource: %s" resource))
-    (message "NetBox: checking connectivity…")
-    (netbox--check-connectivity-async
-     (lambda ()
-       (message "NetBox: fetching %s…" resource)
-       (netbox-api-list-async-cached
-        endpoint nil
-        (lambda (objects err)
-          (if err
-              (message "NetBox: error fetching %s: %s" resource err)
-            (netbox--jump-open-prompt resource
-                                      (netbox--build-candidates objects columns))))))
-     (lambda (msg)
-       (message "NetBox: API unreachable — %s" msg)))))
+    (let ((cached (netbox--cache-get (netbox--cache-key endpoint nil))))
+      (if (not (eq cached netbox--cache-miss))
+          (progn
+            (message "NetBox: serving %d results from cache" (length cached))
+            (netbox--jump-open-prompt
+             resource (netbox--build-candidates cached columns)))
+        (message "NetBox: checking connectivity…")
+        (netbox--check-connectivity-async
+         (lambda ()
+           (message "NetBox: fetching %s…" resource)
+           (netbox-api-list-async-cached
+            endpoint nil
+            (lambda (objects err)
+              (if err
+                  (message "NetBox: error fetching %s: %s" resource err)
+                (netbox--jump-open-prompt
+                 resource (netbox--build-candidates objects columns))))))
+         (lambda (msg)
+           (message "NetBox: API unreachable — %s" msg)))))))
 
 ;;;###autoload
 (defun netbox-jump-to-device ()
@@ -2110,22 +2117,35 @@ Call this from your init file (or bind it) to warm the cache so that
       (when (called-interactively-p 'any)
         (user-error "netbox-url is not configured"))
     (let ((interactive-p (called-interactively-p 'any)))
-      (netbox--check-connectivity-async
-       (lambda ()
-         (dolist (resource netbox-precache-resources)
-           (let* ((entry    (cdr (assoc resource netbox--resource-alist)))
-                  (endpoint (and entry (symbol-value (car entry)))))
-             (when endpoint
-               (netbox-api-list-async-cached
-                endpoint nil
-                (lambda (objects err)
-                  (if err
-                      (message "NetBox pre-cache: error for %s: %s" resource err)
-                    (message "NetBox pre-cache: %d %s cached"
-                             (length objects) resource))))))))
-       (lambda (msg)
-         (when interactive-p
-           (message "NetBox pre-cache: API not reachable — %s" msg)))))))
+      (let ((resources
+             (seq-filter
+              (lambda (resource)
+                (let* ((entry (cdr (assoc resource netbox--resource-alist)))
+                       (endpoint (and entry (symbol-value (car entry)))))
+                  (and endpoint
+                       (eq (netbox--cache-get
+                            (netbox--cache-key endpoint nil))
+                           netbox--cache-miss))))
+              netbox-precache-resources)))
+        (if (null resources)
+            (when interactive-p
+              (message "NetBox pre-cache: all resources are already cached"))
+          (netbox--check-connectivity-async
+           (lambda ()
+             (dolist (resource resources)
+               (let* ((resource resource)
+                      (entry    (cdr (assoc resource netbox--resource-alist)))
+                      (endpoint (symbol-value (car entry))))
+                 (netbox-api-list-async-cached
+                  endpoint nil
+                  (lambda (objects err)
+                    (if err
+                        (message "NetBox pre-cache: error for %s: %s" resource err)
+                      (message "NetBox pre-cache: %d %s cached"
+                               (length objects) resource)))))))
+           (lambda (msg)
+             (when interactive-p
+               (message "NetBox pre-cache: API unreachable — %s" msg)))))))))
 
 (defun netbox--precache-reschedule ()
   "Cancel any existing idle pre-cache timer and start a new one if appropriate.
@@ -2143,6 +2163,10 @@ Called automatically when `netbox-precache-after-idle' changes."
  'netbox-precache-after-idle
  (lambda (_sym _val _op _where)
    (run-at-time 0 nil #'netbox--precache-reschedule)))
+
+;; Apply a value set before this library was loaded (for example via setq in
+;; init.el); variable watchers only observe changes made after installation.
+(netbox--precache-reschedule)
 
 
 ;;;; ──────────────────────────────────────────────────────────
