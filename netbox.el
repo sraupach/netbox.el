@@ -188,8 +188,10 @@ new prefix, unless you have already overridden them individually."
            (set-default sym val)
            (netbox--reset-endpoints val old-value))))
 
-(defcustom netbox-default-page-size 50
-  "Number of results to request per API page."
+(defcustom netbox-default-page-size 500
+  "Number of results to request per API page.
+List commands fetch every page, so a larger value means fewer round trips.
+NetBox silently clamps this to its MAX_PAGE_SIZE setting (1000 by default)."
   :type 'integer
   :group 'netbox)
 
@@ -367,20 +369,42 @@ e.g. \"https://netbox.example.com\" or \"http://192.168.1.10:8080\"."
                            params "&"))
       base)))
 
-(defun netbox--parse-response ()
-  "Parse HTTP response in current buffer; return parsed JSON or signal error."
-  (goto-char (point-min))
-  (let ((status (url-http-parse-response)))
-    (unless (and (>= status 200) (< status 300))
-      (error "netbox: HTTP %d for request" status)))
-  ;; Skip headers — find the blank line separating headers from body
-  (re-search-forward "\r?\n\r?\n" nil t)
+(defun netbox--json-read ()
+  "Parse JSON at point into nested alists with string keys."
   (let ((json-object-type 'alist)
         (json-array-type  'list)
         (json-key-type    'string)
         (json-false       nil)
         (json-null        nil))
     (json-read)))
+
+(defun netbox--response-error-detail ()
+  "Return a short description of the error body at point, or an empty string.
+NetBox reports API errors as a JSON object with a \"detail\" key; fall back
+to the first line of a non-JSON body."
+  (let ((body (string-trim (buffer-substring-no-properties (point) (point-max)))))
+    (cond
+     ((string-empty-p body) "")
+     ((string-prefix-p "{" body)
+      (let ((detail (ignore-errors
+                      (cdr (assoc "detail" (netbox--json-read))))))
+        (if (and (stringp detail) (not (string-empty-p detail)))
+            (concat ": " detail)
+          "")))
+     ((string-prefix-p "<" body) "")
+     (t (concat ": " (car (split-string body "\n" t)))))))
+
+(defun netbox--parse-response ()
+  "Parse HTTP response in current buffer; return parsed JSON or signal error."
+  (when (zerop (buffer-size))
+    (error "Netbox: empty response from server"))
+  (goto-char (point-min))
+  (let ((status (url-http-parse-response)))
+    ;; Skip headers — find the blank line separating headers from body
+    (re-search-forward "\r?\n\r?\n" nil t)
+    (unless (and (>= status 200) (< status 300))
+      (error "Netbox: HTTP %d%s" status (netbox--response-error-detail)))
+    (netbox--json-read)))
 
 (defun netbox--proxy-services ()
   "Return a `url-proxy-services' value derived from `netbox-proxy'.
@@ -407,46 +431,73 @@ or an http+https proxy spec for any other string."
        (with-current-buffer buf
          (setq netbox--is-root-buffer t)))))
 
+(defun netbox--kill-request-buffer (buffer)
+  "Kill the url response BUFFER silently, if it is still live."
+  (when (buffer-live-p buffer)
+    (let ((kill-buffer-query-functions nil))
+      (kill-buffer buffer))))
+
 (defun netbox--url-retrieve-with-timeout (url callback timeout)
   "Retrieve URL asynchronously and call CALLBACK with status.
-Abort the request and report an error when it exceeds TIMEOUT seconds.
+CALLBACK is called exactly once.  On completion it runs with the response
+buffer current; when the request exceeds TIMEOUT seconds it is aborted and
+CALLBACK runs in a scratch buffer with a timeout error status.  The
+response buffer is killed automatically after CALLBACK returns, so
+CALLBACK must never kill `current-buffer' itself.
 The caller should dynamically bind the usual `url-request-*' variables."
   (let (request-buffer timer done)
-    (setq timer
-          (run-at-time
-           timeout nil
-           (lambda ()
-             (unless done
-               (setq done t)
-               (when (buffer-live-p request-buffer)
-                 (kill-buffer request-buffer))
-               (funcall callback
-                        `(:error (error timeout
-                                        ,(format "Request timed out after %s seconds"
-                                                 timeout))))))))
-    (condition-case err
-        (setq request-buffer
-              (url-retrieve
-               url
-               (lambda (status)
-                 (unless done
-                   (setq done t)
-                   (when (timerp timer)
-                     (cancel-timer timer))
-                   (funcall callback status)))
-               nil t t))
-      (error
-       (when (timerp timer)
-         (cancel-timer timer))
-       (signal (car err) (cdr err))))))
+    (cl-flet ((deliver (status response-buffer)
+                (unless done
+                  (setq done t)
+                  (when (timerp timer)
+                    (cancel-timer timer))
+                  (unwind-protect
+                      (if (buffer-live-p response-buffer)
+                          (with-current-buffer response-buffer
+                            (funcall callback status))
+                        (with-temp-buffer
+                          (funcall callback status)))
+                    (netbox--kill-request-buffer response-buffer)))))
+      (setq timer
+            (run-at-time
+             timeout nil
+             (lambda ()
+               (unless done
+                 ;; Report first (marks the request done, so the sentinel
+                 ;; triggered by killing the connection is ignored), and
+                 ;; do so in a scratch buffer so the caller never touches
+                 ;; the user's buffer.
+                 (let ((aborted request-buffer))
+                   (deliver `(:error (error timeout
+                                            ,(format "Request timed out after %s seconds"
+                                                     timeout)))
+                            nil)
+                   (netbox--kill-request-buffer aborted))))))
+      (condition-case err
+          (setq request-buffer
+                (url-retrieve
+                 url
+                 (lambda (status) (deliver status (current-buffer)))
+                 nil t t))
+        (error
+         (when (timerp timer)
+           (cancel-timer timer))
+         (signal (car err) (cdr err)))))))
 
 (defun netbox--status-error-message (status)
-  "Return a readable error message from asynchronous URL STATUS."
+  "Return a readable error message from asynchronous URL STATUS.
+HTTP-level failures (`(error http CODE)') return nil so the caller can
+parse the response body for NetBox's own error detail."
   (let ((err (plist-get status :error)))
     (when err
-      (if (and (consp err) (eq (car err) 'error))
-          (mapconcat (lambda (part) (format "%s" part)) (cddr err) ": ")
-        (format "%s" err)))))
+      (cond
+       ((and (consp err) (eq (car err) 'error) (eq (cadr err) 'http))
+        nil)
+       ((and (consp err) (eq (car err) 'error))
+        (string-trim
+         (mapconcat (lambda (part) (string-trim (format "%s" part)))
+                    (cddr err) " ")))
+       (t (format "%s" err))))))
 
 (defun netbox-quit ()
   "Quit the current NetBox buffer.
@@ -486,10 +537,11 @@ if `netbox-pre-fetch-check' is nil, ON-OK is called immediately."
           (netbox--url-retrieve-with-timeout
            ping-url
            (lambda (status)
-             (let ((error-message (netbox--status-error-message status))
-                   (ping-buf (current-buffer)))
-               (when (buffer-live-p ping-buf)
-                 (kill-buffer ping-buf))
+             (let ((error-message
+                    (or (netbox--status-error-message status)
+                        (condition-case err
+                            (progn (netbox--parse-response) nil)
+                          (error (error-message-string err))))))
                (if error-message
                    (funcall on-err error-message)
                  (funcall on-ok))))
@@ -569,10 +621,13 @@ Returns a flat list of result alists."
           (setq offset next-offset)))))
     (apply #'append (nreverse pages))))
 
+(defun netbox--object-path (endpoint id)
+  "Return the API path of the object with ID under list ENDPOINT."
+  (concat (string-trim-right endpoint "/") "/" (format "%s" id) "/"))
+
 (defun netbox-api-get (endpoint id)
   "Fetch a single object from ENDPOINT by integer or string ID."
-  (netbox-api-request
-   (concat (string-trim-right endpoint "/") "/" (format "%s" id) "/")))
+  (netbox-api-request (netbox--object-path endpoint id)))
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -598,20 +653,19 @@ ERROR-STRING is nil on success, a description string on failure."
           (netbox--url-retrieve-with-timeout
            url
            (lambda (status)
-             (let ((error-message (netbox--status-error-message status)))
-               (if error-message
-                   (progn
-                     (when (buffer-live-p (current-buffer))
-                       (kill-buffer (current-buffer)))
-                     (funcall callback nil error-message))
+             (let ((error-message (netbox--status-error-message status))
+                   result)
+               ;; Parse inside the handler, but invoke CALLBACK outside it
+               ;; so an error raised by CALLBACK is never mistaken for a
+               ;; parse failure (which would invoke CALLBACK twice).
+               (unless error-message
                  (condition-case parse-err
-                     (let ((result (netbox--parse-response)))
-                       (kill-buffer (current-buffer))
-                       (funcall callback result nil))
+                     (setq result (netbox--parse-response))
                    (error
-                    (kill-buffer (current-buffer))
-                    (funcall callback nil
-                             (error-message-string parse-err)))))))
+                    (setq error-message (error-message-string parse-err)))))
+               (if error-message
+                   (funcall callback nil error-message)
+                 (funcall callback result nil))))
            netbox-timeout)))
     (error
      (funcall callback nil (error-message-string err)))))
@@ -654,9 +708,7 @@ Shows incremental progress in the echo area."
 (defun netbox-api-get-async (endpoint id callback)
   "Async fetch of a single object from ENDPOINT by ID.
 Calls (CALLBACK RESULT nil) on success or (CALLBACK nil ERROR) on failure."
-  (netbox-api-request-async
-   (concat (string-trim-right endpoint "/") "/" (format "%s" id) "/")
-   nil callback))
+  (netbox-api-request-async (netbox--object-path endpoint id) nil callback))
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -731,8 +783,34 @@ populates the cache on success."
              (let ((callbacks (nreverse
                                (gethash key netbox--in-flight-requests))))
                (remhash key netbox--in-flight-requests)
+               ;; One failing consumer must not starve the others.
                (dolist (waiting-callback callbacks)
-                 (funcall waiting-callback results err))))))))))
+                 (condition-case cb-err
+                     (funcall waiting-callback results err)
+                   (error
+                    (message "NetBox: error in result handler: %s"
+                             (error-message-string cb-err)))))))))))))
+
+(defun netbox--detail-cache-key (endpoint id)
+  "Return the cache key for the single object ID under ENDPOINT."
+  (netbox--cache-key (netbox--object-path endpoint id) nil))
+
+(defun netbox-api-get-async-cached (endpoint id callback &optional bypass)
+  "Like `netbox-api-get-async' but serves the object from cache when fresh.
+With non-nil BYPASS, drop any cached copy and always fetch from the API.
+Successful responses are cached for `netbox-cache-ttl' seconds."
+  (let* ((key (netbox--detail-cache-key endpoint id))
+         (cached (if bypass
+                     (progn (remhash key netbox--cache) netbox--cache-miss)
+                   (netbox--cache-get key))))
+    (if (not (eq cached netbox--cache-miss))
+        (funcall callback cached nil)
+      (netbox-api-get-async
+       endpoint id
+       (lambda (obj err)
+         (unless err
+           (netbox--cache-put key obj))
+         (funcall callback obj err))))))
 
 (defun netbox--alist-str (alist key)
   "Return string value for KEY in ALIST, or empty string if absent/nil."
@@ -758,19 +836,44 @@ populates the cache on success."
      ((numberp node) (number-to-string node))
      (t              (format "%s" node)))))
 
+(defface netbox-status-active
+  '((t :inherit success))
+  "Face for active/connected/online status values."
+  :group 'netbox)
+
+(defface netbox-status-planned
+  '((t :inherit warning))
+  "Face for planned/staged status values."
+  :group 'netbox)
+
+(defface netbox-status-reserved
+  '((t :inherit font-lock-type-face))
+  "Face for reserved/available status values."
+  :group 'netbox)
+
+(defface netbox-status-maintenance
+  '((t :inherit font-lock-variable-name-face))
+  "Face for decommissioning/maintenance status values."
+  :group 'netbox)
+
+(defface netbox-status-failed
+  '((t :inherit error))
+  "Face for failed/offline/decommissioned status values."
+  :group 'netbox)
+
 (defun netbox--status-face (status)
   "Return a face for STATUS string based on NetBox status semantics."
   (pcase (downcase (or status ""))
     ((or "active" "connected" "reachable" "completed" "online")
-     '(:foreground "green"))
+     'netbox-status-active)
     ((or "planned" "staged")
-     '(:foreground "yellow"))
+     'netbox-status-planned)
     ((or "reserved" "available")
-     '(:foreground "cyan"))
+     'netbox-status-reserved)
     ((or "decommissioning" "maintenance")
-     '(:foreground "orange"))
+     'netbox-status-maintenance)
     ((or "decommissioned" "failed" "offline" "container")
-     '(:foreground "red"))
+     'netbox-status-failed)
     (_
      'default)))
 
@@ -827,9 +930,14 @@ Status columns (header \"Status\") are propertized with a semantic face."
     (erase-buffer)
     (dolist (pair obj)
       (let ((key (car pair))
-            (val (cdr pair)))
+            (val (cdr pair))
+            start)
         (insert (propertize (format "%-30s" key) 'face 'font-lock-keyword-face))
+        (setq start (point))
         (netbox--insert-value val)
+        ;; Mark the value region so `netbox-detail-yank-value' does not
+        ;; depend on the key column having a fixed width.
+        (put-text-property start (point) 'netbox-value t)
         (insert "\n")))
     (goto-char (point-min))))
 
@@ -896,10 +1004,50 @@ Returns nil when the URL cannot be parsed."
      ((not (string-empty-p name)) name)
      (t (format "%s #%s" endpoint id)))))
 
-(defun netbox-show-detail (endpoint id)
-  "Display detail view for object at ENDPOINT with ID (async)."
-  (let* ((buf-name (netbox--detail-loading-buffer-name endpoint id))
-         (buf (get-buffer-create buf-name)))
+(defun netbox--find-detail-buffer (endpoint id)
+  "Return the live detail buffer already showing ENDPOINT/ID, or nil."
+  (seq-find (lambda (buf)
+              (and (equal (buffer-local-value 'netbox-detail--endpoint buf) endpoint)
+                   (equal (buffer-local-value 'netbox-detail--id buf) id)
+                   (provided-mode-derived-p
+                    (buffer-local-value 'major-mode buf) 'netbox-detail-mode)))
+            (buffer-list)))
+
+(defun netbox--detail-current-p (buf endpoint id)
+  "Return non-nil while BUF is live and still shows ENDPOINT/ID."
+  (and (buffer-live-p buf)
+       (equal endpoint (buffer-local-value 'netbox-detail--endpoint buf))
+       (equal id (buffer-local-value 'netbox-detail--id buf))))
+
+(defun netbox--detail-show-result (buf endpoint id obj err)
+  "Render OBJ (or ERR) for ENDPOINT/ID into detail buffer BUF.
+Does nothing when BUF has since been repurposed or killed."
+  (when (netbox--detail-current-p buf endpoint id)
+    (with-current-buffer buf
+      (if err
+          (let ((inhibit-read-only t))
+            (rename-buffer
+             (format "*NetBox: %s #%s*" (string-trim-right endpoint "/") id)
+             t)
+            (erase-buffer)
+            (insert (propertize
+                     (format "Unable to load this object: %s\n\nPress `g r' to retry."
+                             err)
+                     'face 'error)))
+        (rename-buffer (format "*NetBox: %s*"
+                               (netbox--object-title obj endpoint id))
+                       t)
+        (setq netbox-detail--obj obj)
+        (netbox--render-detail obj)))))
+
+(defun netbox-show-detail (endpoint id &optional no-cache)
+  "Display detail view for object at ENDPOINT with ID (async).
+An existing detail buffer for the same object is reused.  The object is
+served from the response cache when fresh unless NO-CACHE is non-nil, in
+which case it is always fetched from the API."
+  (let ((buf (or (netbox--find-detail-buffer endpoint id)
+                 (get-buffer-create
+                  (netbox--detail-loading-buffer-name endpoint id)))))
     (with-current-buffer buf
       (netbox-detail-mode)
       (setq netbox-detail--endpoint endpoint
@@ -908,43 +1056,21 @@ Returns nil when the URL cannot be parsed."
         (erase-buffer)
         (insert (propertize "Loading…" 'face 'font-lock-comment-face))))
     (netbox--display-buffer buf)
-    (netbox--run-with-connectivity-check
-     buf
-     (lambda ()
-       (netbox-api-get-async
-        endpoint id
-         (lambda (obj err)
-           (if (or (null buf)
-                   (not (buffer-live-p buf))
-                   (not (equal endpoint
-                               (buffer-local-value 'netbox-detail--endpoint buf)))
-                   (not (equal id
-                               (buffer-local-value 'netbox-detail--id buf))))
-               nil
-            (if err
-                (with-current-buffer buf
-                  (let ((inhibit-read-only t))
-                    (rename-buffer
-                     (format "*NetBox: %s #%s*"
-                             (string-trim-right endpoint "/") id)
-                     t)
-                    (erase-buffer)
-                    (insert (propertize
-                             (format "Unable to load this object: %s\n\nPress `g r' to retry."
-                                     err)
-                             'face 'error))))
-              (let* ((display (netbox--object-title obj endpoint id))
-                     (new-name (format "*NetBox: %s*" display)))
-                (with-current-buffer buf
-                  (rename-buffer new-name t)
-                  (setq netbox-detail--obj obj)
-                   (netbox--render-detail obj))))))))
-     (lambda ()
-       (and (buffer-live-p buf)
-            (equal endpoint
-                   (buffer-local-value 'netbox-detail--endpoint buf))
-            (equal id
-                   (buffer-local-value 'netbox-detail--id buf)))))))
+    (let ((cached (if no-cache
+                      netbox--cache-miss
+                    (netbox--cache-get (netbox--detail-cache-key endpoint id)))))
+      (if (not (eq cached netbox--cache-miss))
+          ;; Cache hit: no network involved, so skip the connectivity check.
+          (netbox--detail-show-result buf endpoint id cached nil)
+        (netbox--run-with-connectivity-check
+         buf
+         (lambda ()
+           (netbox-api-get-async-cached
+            endpoint id
+            (lambda (obj err)
+              (netbox--detail-show-result buf endpoint id obj err))
+            no-cache))
+         (lambda () (netbox--detail-current-p buf endpoint id)))))))
 
 (defun netbox--api-path-to-ui-path (api-path)
   "Convert API-PATH to the corresponding NetBox web UI path.
@@ -977,13 +1103,15 @@ Strips the leading `netbox-api-prefix' component, e.g.
 
 (defun netbox-detail-yank-value ()
   "Copy the field value on the current line to the kill ring.
-Each line in a detail buffer is laid out as a 30-character key followed
-by the value.  The value is copied as a plain string (no text properties)."
+The value is copied as a plain string (no text properties)."
   (interactive)
   (let* ((bol (line-beginning-position))
          (eol (line-end-position))
-         (val-start (min (+ bol 30) eol))
-         (str (substring-no-properties (buffer-substring val-start eol))))
+         (val-start (if (get-text-property bol 'netbox-value)
+                        bol
+                      (or (next-single-property-change bol 'netbox-value nil eol)
+                          eol)))
+         (str (buffer-substring-no-properties val-start eol)))
     (if (string-empty-p str)
         (user-error "No value on this line")
       (kill-new str)
@@ -1013,9 +1141,11 @@ by the value.  The value is copied as a plain string (no text properties)."
       (user-error "No object on this line"))))
 
 (defun netbox-detail-refresh ()
-  "Reload the current detail view from the API."
+  "Reload the current detail view from the API, bypassing the cache."
   (interactive)
-  (netbox-show-detail netbox-detail--endpoint netbox-detail--id))
+  (unless (and netbox-detail--endpoint netbox-detail--id)
+    (user-error "No object to reload in this buffer"))
+  (netbox-show-detail netbox-detail--endpoint netbox-detail--id t))
 
 
 ;;;; ──────────────────────────────────────────────────────────
@@ -1042,22 +1172,24 @@ by the value.  The value is copied as a plain string (no text properties)."
 (defun netbox--auto-size-columns (entries columns)
   "Return COLUMNS with widths expanded to fit the widest value in ENTRIES.
 Each column width is the max of its declared width and the widest rendered
-string in that column across all ENTRIES.  A padding of 2 is added."
+string in that column across all ENTRIES, measured in display columns via
+`string-width'.  A padding of 2 is added."
   (let* ((ncols  (length columns))
-         (widths (mapcar (lambda (c) (max (cadr c) (length (car c)))) columns)))
+         (widths (apply #'vector
+                        (mapcar (lambda (c) (max (cadr c) (string-width (car c))))
+                                columns))))
     (dolist (entry entries)
-      (let ((vals (cadr entry)))
-        (dotimes (i ncols)
-          (when (< i (length vals))
-            (let* ((cell (aref vals i))
-                   (w    (length (if (stringp cell)
-                                     cell
-                                   (substring-no-properties cell)))))
-              (when (> w (nth i widths))
-                (setf (nth i widths) w)))))))
+      (let* ((vals (cadr entry))
+             (n    (min ncols (length vals))))
+        (dotimes (i n)
+          (let* ((cell (aref vals i))
+                 ;; tabulated-list cells are strings or (LABEL . PROPS).
+                 (w (string-width (if (stringp cell) cell (car cell)))))
+            (when (> w (aref widths i))
+              (aset widths i w))))))
     (cl-mapcar (lambda (col w)
                  (cons (car col) (cons (+ w 2) (cddr col))))
-               columns widths)))
+               columns (append widths nil))))
 
 (defun netbox--list-update-display ()
   "Sync buffer name and mode-line with the current filter state."
@@ -1632,6 +1764,20 @@ Opens a list buffer filtered by the ?q= API parameter."
     ("URL"         45 "url"))
   "Column spec for the super search results list.")
 
+(defun netbox--super-search-sort (results)
+  "Return RESULTS ordered by resource type, then by display name.
+Parallel fetches complete in arbitrary order, so sort for a stable view."
+  (sort (copy-sequence results)
+        (lambda (a b)
+          (let ((type-a (or (cdr (assoc "object_type" a)) ""))
+                (type-b (or (cdr (assoc "object_type" b)) "")))
+            (if (string= type-a type-b)
+                (string-lessp (downcase (or (cdr (assoc "display" a))
+                                            (cdr (assoc "name" a)) ""))
+                              (downcase (or (cdr (assoc "display" b))
+                                            (cdr (assoc "name" b)) "")))
+              (string-lessp type-a type-b))))))
+
 (defun netbox--super-search-make-entry (obj)
   "Convert a search result OBJ into a tabulated-list entry.
 OBJ is an alist with an injected \"object_type\" key (the human-readable
@@ -1647,20 +1793,24 @@ resource name) prepended during the parallel fetch."
                      url)))
     (list row-id (vector obj-type display desc url))))
 
+(defun netbox--super-search-url-at-point ()
+  "Return the API URL of the search result on the current line, or nil."
+  (let ((cols (tabulated-list-get-entry)))
+    (when (and cols (> (length cols) 3))
+      (let ((url (aref cols 3)))
+        (and (stringp url) (not (string-empty-p url)) url)))))
+
 (defun netbox--super-search-open-detail ()
   "Open the detail view for the search result on the current line.
 Parses the object's API URL to determine the endpoint and ID."
   (interactive)
-  (let* ((id  (tabulated-list-get-id))
-         (entry (and id (assoc id tabulated-list-entries)))
-         (cols  (and entry (cadr entry)))
-         (url   (and cols (aref cols 3))))
-    (if (and url (not (string-empty-p url)))
-        (let ((nav (netbox--parse-api-url url)))
-          (if nav
-              (netbox-show-detail (car nav) (cdr nav))
-            (user-error "Cannot parse API URL: %s" url)))
-      (user-error "No URL for this result"))))
+  (let ((url (netbox--super-search-url-at-point)))
+    (unless url
+      (user-error "No URL for this result"))
+    (let ((nav (netbox--parse-api-url url)))
+      (if nav
+          (netbox-show-detail (car nav) (cdr nav))
+        (user-error "Cannot parse API URL: %s" url)))))
 
 (defvar netbox-super-search-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1688,19 +1838,16 @@ Parses the object's API URL to determine the endpoint and ID."
 (defun netbox--super-search-open-browser-url ()
   "Open the NetBox web UI URL for the result on the current line."
   (interactive)
-  (let* ((id  (tabulated-list-get-id))
-         (entry (and id (assoc id tabulated-list-entries)))
-         (cols  (and entry (cadr entry)))
-         (api-url (and cols (aref cols 3))))
-    (if (and api-url (not (string-empty-p api-url)))
-        (let ((nav (netbox--parse-api-url api-url)))
-          (if nav
-              (let ((ui-path (netbox--api-path-to-ui-path
-                              (string-trim-right (car nav) "/"))))
-                (browse-url (concat (string-trim-right netbox-url "/") ui-path "/"
-                                    (format "%s" (cdr nav)) "/")))
-            (user-error "Cannot parse URL: %s" api-url)))
-      (user-error "No URL for this result"))))
+  (let ((api-url (netbox--super-search-url-at-point)))
+    (unless api-url
+      (user-error "No URL for this result"))
+    (let ((nav (netbox--parse-api-url api-url)))
+      (if nav
+          (let ((ui-path (netbox--api-path-to-ui-path
+                          (string-trim-right (car nav) "/"))))
+            (browse-url (concat (string-trim-right netbox-url "/") ui-path "/"
+                                (format "%s" (cdr nav)) "/")))
+        (user-error "Cannot parse URL: %s" api-url)))))
 
 (defun netbox-super-search-refresh ()
   "Re-run the current super search query."
@@ -1766,7 +1913,8 @@ results into a single list."
                             (buffer-local-value
                              'netbox-super-search--request-generation buf)))
                 (with-current-buffer buf
-                  (let* ((entries (mapcar #'netbox--super-search-make-entry all-results))
+                  (let* ((entries (mapcar #'netbox--super-search-make-entry
+                                          (netbox--super-search-sort all-results)))
                          (display-entries
                           (if (and had-error (null entries))
                               (list (list nil (vector
@@ -1993,9 +2141,9 @@ Displays a diagnostic report in the *NetBox config check* buffer."
           (let* ((label (car c))
                  (ok    (cdr c))
                  (mark  (if ok
-                            (propertize "  ✓ " 'face '(:foreground "green"))
-                          (propertize "  ✗ " 'face '(:foreground "red"))))
-                 (face  (if ok 'default '(:foreground "red"))))
+                            (propertize "  ✓ " 'face 'success)
+                          (propertize "  ✗ " 'face 'error)))
+                 (face  (if ok 'default 'error)))
             (insert mark (propertize label 'face face) "\n")))
         (insert "\n")
         (netbox-config-check-mode)))

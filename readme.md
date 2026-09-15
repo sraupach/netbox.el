@@ -23,8 +23,11 @@
 - 🌐 **Open in browser** — press `o` to open any object's NetBox URL directly in your default browser
 - 🔎 **Live filter indicator** — active `?q=` filter shown in the mode-line;
   press `F` to edit the current filter without retyping
-- ⚡ **Response caching** — configurable TTL (default 5 min) eliminates
-  redundant API round-trips; `g r` always fetches live data
+- ⚡ **Response caching** — configurable TTL (default 5 min) for both list
+  and detail responses eliminates redundant API round-trips; `g r` always
+  fetches live data
+- 🎯 **Theme-aware status faces** — `netbox-status-*` faces inherit from
+  `success`/`warning`/`error`, so they look right on light and dark themes
 - 🔒 **Secure token storage** via `auth-source` / `~/.authinfo.gpg`
 - 🛡️ **Optional pre-fetch connectivity check** for fast, clear error messages
 - 🌍 **Per-request proxy support** — never touches global Emacs proxy state
@@ -184,7 +187,7 @@ All settings live under the `netbox` customization group
 | `netbox-url`                  | `""`     | Base URL of your NetBox instance (no trailing slash)           |
 | `netbox-token`                | `""`     | API token — leave empty to use `auth-source` (see below)       |
 | `netbox-api-prefix`           | `"/api"` | API path prefix (change for reverse-proxy installs)            |
-| `netbox-default-page-size`    | `50`     | Results per page for paginated fetches                         |
+| `netbox-default-page-size`    | `500`    | Results per page (NetBox clamps to its `MAX_PAGE_SIZE`, default 1000) |
 | `netbox-tls-verify`           | `t`      | Set to `nil` to skip TLS certificate verification              |
 | `netbox-timeout`              | `30`     | Request timeout in seconds for data fetches                    |
 | `netbox-proxy`                | `nil`    | Proxy URL, `"direct"`, or `nil` to inherit global proxy        |
@@ -213,7 +216,7 @@ All settings live under the `netbox` customization group
         ;; Cache responses for 10 minutes
         netbox-cache-ttl 600
 
-        ;; Fetch more rows per page
+        ;; Fetch fewer rows per page (more round trips, smaller responses)
         netbox-default-page-size 100
 
         ;; Route API traffic through a proxy (optional)
@@ -237,7 +240,8 @@ Then only set `netbox-url` — the token is looked up automatically.
 
 ### Response caching
 
-`netbox-cache-ttl` controls how long list responses are cached in memory:
+`netbox-cache-ttl` controls how long list **and detail** responses are cached
+in memory:
 
 | Value        | Behaviour                                      |
 |--------------|------------------------------------------------|
@@ -245,7 +249,9 @@ Then only set `netbox-url` — the token is looked up automatically.
 | `0`          | Disable caching entirely                       |
 | any integer  | Cache for that many seconds                    |
 
-`g r` in a list buffer **always** bypasses the cache and fetches live data.
+`g r` in a list or detail buffer **always** bypasses the cache and fetches live
+data.  Re-opening an object you just viewed (e.g. following a link and then
+returning) reuses its existing detail buffer and is served from the cache.
 `M-x netbox-cache-clear` flushes the entire in-memory cache immediately.
 
 ### Pre-caching for instant `netbox-jump`
@@ -337,8 +343,11 @@ Each resource has a `defvar` controlling which columns appear in its list view:
 
 Each entry is `(HEADER WIDTH KEY...)` where `KEY...` is the path into the
 JSON object.  The `WIDTH` value is a **minimum** — columns automatically
-expand to fit the widest value after data loads.  Any column with the header
-`"Status"` automatically receives semantic colour-coding.
+expand to fit the widest value (measured in display columns, so wide
+characters are handled) after data loads.  Any column with the header
+`"Status"` automatically receives semantic colour-coding via the
+`netbox-status-active`, `-planned`, `-reserved`, `-maintenance` and `-failed`
+faces (customisable with `M-x customize-face`).
 
 ---
 
